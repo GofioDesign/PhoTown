@@ -34,6 +34,9 @@ export async function ensureGroupMembership(db, userId, groupId, legacyStatus = 
 export async function ensureAdminPrincipal(db, identity, superadminEmails = []) {
   if (!identity?.sub || !identity?.email) return null;
   const email = identity.email.toLowerCase();
+  const assignments = (await db.prepare('SELECT group_id,role FROM group_role_assignments WHERE email=?').bind(email).all()).results;
+  const isSuperadmin = superadminEmails.includes(email);
+  if (!isSuperadmin && !assignments.length) return null;
   let provider = await db.prepare("SELECT user_id FROM identity_providers WHERE provider='google' AND subject=?").bind(identity.sub).first();
   let userId = provider?.user_id;
   if (!userId) {
@@ -47,16 +50,17 @@ export async function ensureAdminPrincipal(db, identity, superadminEmails = []) 
     provider = await db.prepare("SELECT user_id FROM identity_providers WHERE provider='google' AND subject=?").bind(identity.sub).first();
     userId = provider?.user_id || userId;
   }
-  const isSuperadmin = superadminEmails.includes(email);
   if (isSuperadmin) {
     await db.prepare("INSERT OR IGNORE INTO global_roles (user_id,role,created_at) VALUES (?,'superadmin',?)").bind(userId, now()).run();
-    const groups = (await db.prepare('SELECT id FROM groups').all()).results;
-    for (const group of groups) {
-      await db.prepare(`INSERT INTO group_memberships (user_id,group_id,par_id,role,state,trust,joined_at)
-        VALUES (?,?,?,'admin','active',0,?)
-        ON CONFLICT(user_id,group_id) DO UPDATE SET role='admin',state='active'`)
-        .bind(userId, group.id, crypto.randomUUID(), now()).run();
-    }
+  }
+  for (const assignment of assignments) {
+    await db.batch([
+      db.prepare(`INSERT INTO group_memberships (user_id,group_id,par_id,role,state,trust,joined_at)
+        VALUES (?,?,?,?,'active',0,?)
+        ON CONFLICT(user_id,group_id) DO UPDATE SET role=excluded.role,state='active'`)
+        .bind(userId, assignment.group_id, crypto.randomUUID(), assignment.role, now()),
+      db.prepare('UPDATE group_role_assignments SET claimed_user_id=? WHERE group_id=? AND email=?').bind(userId, assignment.group_id, email)
+    ]);
   }
   return { ...identity, user_id: userId, superadmin: isSuperadmin };
 }
