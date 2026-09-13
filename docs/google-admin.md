@@ -28,13 +28,13 @@ El backend verifica firma, emisor, audiencia, caducidad, nonce, email verificado
 - Abrir/cerrar grupos. Cerrar el grupo impide inmediatamente el acceso de sus participantes.
 - Revisar fotografías, aprobarlas, ocultarlas o eliminarlas definitivamente.
 - Asignar confianza o bloquear a un participante dentro de un grupo.
-- Recuperar fotografías tras perder una cookie: la persona entra de nuevo, copia «Mi identidad» en Mis fotos y la comunica al administrador. En Gestionar grupo, el administrador contrasta la identidad anterior con las fotografías (muestran su identificador), selecciona el origen e introduce la nueva identidad. Ambas deben pertenecer al grupo. La confirmación reasigna las fotos pendientes/publicadas/ocultas conservando sus estados y descripciones; bloquea el origen y conserva los permisos propios del destino. No restaura fotos borradas ni transfiere envíos incompletos u otros grupos. El proceso es repetible sin duplicar imágenes; se modifica propiedad, no los archivos de R2.
+- Recuperar fotografías tras perder una cookie: la persona entra de nuevo, copia «Mi identidad» en Personalización → Recuperar mi acceso y la comunica al administrador. En Gestionar grupo, el administrador contrasta la identidad anterior con las fotografías (muestran su identificador), selecciona el origen e introduce la nueva identidad. Ambas deben pertenecer al grupo. La confirmación reasigna las fotos pendientes/publicadas/ocultas conservando sus estados y descripciones; bloquea el origen y conserva los permisos propios del destino. No restaura fotos borradas ni transfiere envíos incompletos u otros grupos. El proceso es repetible sin duplicar imágenes; se modifica propiedad, no los archivos de R2.
 
 Los dos administradores tienen acceso a todos los grupos de esta instalación. No hay roles administrativos por grupo todavía. Las listas se orientan a grupos pequeños; la lista de participantes del panel muestra hasta 200 por grupo.
 
 ## Accesibilidad
 
-La invitación se escribe como texto visible. El visor completo y el espacio libre de la cámara permiten disparar con un clic; los enlaces y controles mantienen su propia función. También hay un botón de Fotografiar con nombre accesible, texto visible y activación mediante teclado. No hay un atajo global que intercepte teclas mientras se escribe.
+La invitación se escribe como texto visible. El visor completo y el espacio libre de la cámara permiten disparar con un clic; los enlaces y controles mantienen su propia función. También hay un botón de Fotografiar con nombre accesible y activación mediante teclado. No hay un atajo global que intercepte teclas mientras se escribe.
 
 Las pantallas cambian el foco a su encabezado, los avisos se anuncian y el diálogo de borrado admite teclado/Escape. Se mantiene contraste alto, áreas táctiles amplias y compatibilidad con colores forzados. Las fotografías admiten una descripción textual opcional en Mis fotos para mejorar su interpretación con lectores de pantalla; sin descripción no se inventa el contenido visual.
 
@@ -44,9 +44,9 @@ Esto no certifica conformidad WCAG ni sustituye pruebas con personas con discapa
 
 El alias opcional se guarda por grupo, admite hasta 40 caracteres y puede retirarse dejándolo vacío. No es una identidad verificada ni un nombre único. El muro muestra el alias actual; tras recuperar una identidad, las fotos usan el alias del destino.
 
-Cada envío a varios grupos crea una copia independiente. Descargar o borrar desde Mis fotos actúa sobre la copia del grupo seleccionado en la cabecera. Cambiar de grupo no concede acceso a grupos nuevos, que siguen requiriendo invitación.
+Cada envío a varios grupos crea una copia independiente. YO reúne todas las copias del propietario. Descargar o borrar actúa sobre las copias seleccionadas, y la confirmación identifica los grupos afectados. Cambiar de grupo no concede acceso a grupos nuevos, que siguen requiriendo invitación.
 
-El participante puede borrar sus fotos del grupo actual, incluso si están pendientes u ocultas. El servidor verifica propiedad y grupo. La retirada del muro es inmediata; el archivo de R2 se elimina antes de confirmar el éxito. Si R2 falla, queda inaccesible y se reintenta desde Mis fotos o mediante una tarea periódica.
+El participante puede borrar sus copias de todos sus grupos desde YO, incluso si están pendientes u ocultas. El servidor verifica la propiedad también al efectuar la retirada. La retirada del muro es inmediata; el archivo de R2 se elimina antes de confirmar el éxito. Si R2 falla, queda inaccesible y una tarea periódica reintenta el borrado.
 
 Se conserva un registro mínimo de identificador/ruta, sin propietario, descripción ni hash de imagen, para impedir que un reenvío resucite el archivo y para retirar escrituras tardías. El borrado no puede retirar copias que otra persona ya haya visto/capturado ni alterar de inmediato las retenciones de recuperación del proveedor. No hay una papelera recuperable desde PhoTown.
 
@@ -55,3 +55,7 @@ Las fotografías del sprint 1 no tenían publisher y no se atribuyen automática
 Las cookies pertenecen a cada dominio. Al cambiar desde workers.dev hay que entrar de nuevo con la invitación; las fotos hechas desde la dirección anterior siguen asociadas a la identidad de ese navegador en la dirección anterior. No se transfieren automáticamente entre dominios.
 
 Instalar en pantalla de inicio puede abrir un contexto con identidad distinta: entrar con la invitación y utilizar recuperación administrativa si es necesario reasignar las fotos anteriores.
+
+## Lista de espera
+
+El botón «Lista de espera» de administración muestra emails y fecha de solicitud, con paginación de 50 filas. Permite eliminar una solicitud tras confirmación. Los datos no se exponen a participantes ni al público. Guardarlos no crea una identidad ni permite entrar a grupos; no se envían notificaciones. Revisar periódicamente las solicitudes y eliminar las que ya no sean necesarias. La migración 0003 añade únicamente esta tabla e índice.

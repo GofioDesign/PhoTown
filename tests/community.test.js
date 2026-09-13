@@ -5,12 +5,13 @@ import { readFileSync } from 'node:fs';
 import worker from '../server/worker.js';
 import { signToken } from '../server/tokens.js';
 import { authorizeGoogleClaims } from '../server/google-auth.js';
-import { cleanupDeleted, photoWeek } from '../server/community.js';
+import { cleanupDeleted, photoWeek, erasePhoto } from '../server/community.js';
 import { sanitizeWebP } from '../server/webp.js';
 
 function env() {
   const sqlite = new DatabaseSync(':memory:'); sqlite.exec(readFileSync(new URL('../db/migrations/0001_groups.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../db/migrations/0002_participant_alias.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../db/migrations/0003_waitlist.sql', import.meta.url), 'utf8'));
   const db = { withSession() { return this; }, prepare(sql) {
     let args = [];
     return { bind(...values) { args = values; return this; },
@@ -43,6 +44,55 @@ function image() {
   const b = new Uint8Array(30); b.set(Buffer.from('RIFF')); new DataView(b.buffer).setUint32(4,22,true); b.set(Buffer.from('WEBPVP8 '),8); new DataView(b.buffer).setUint32(16,10,true); b.set([0,0,0,0x9d,1,0x2a,16,0,16,0],20); return b;
 }
 const upload = (e, cookies, id = crypto.randomUUID()) => call(e, '/api/photos', 'POST', cookies, image(), { 'Content-Type': 'image/webp', 'Idempotency-Key': id });
+
+test('personal library spans owned groups without exposing other participants or linking independent copies', async () => {
+  const e = env(), a = await join(e), admin = await adminCookie(e);
+  const group = await (await call(e, '/api/admin/groups', 'POST', admin, { name: 'Second group' })).json();
+  const second = await join(e, group.code, a), outsider = await join(e, group.code);
+  const firstId = crypto.randomUUID(), secondId = crypto.randomUUID(), otherId = crypto.randomUUID();
+  await upload(e, a, firstId); await upload(e, second, secondId); await upload(e, outsider, otherId);
+  const library = await (await call(e, '/api/library', 'GET', second)).json();
+  assert.deepEqual(new Set(library.photos.map(p => p.id)), new Set([firstId, secondId]));
+  assert.equal(library.photos.find(p => p.id === firstId).group_name, 'PhoTown');
+  assert.equal((await call(e, `/api/images/${firstId}`, 'GET', second)).status, 200);
+  assert.equal((await call(e, `/api/library/${firstId}/download`, 'GET', outsider)).status, 404);
+  assert.equal((await call(e, `/api/library/${firstId}/description`, 'POST', outsider, { description: 'Not mine' })).status, 404);
+  assert.equal((await call(e, `/api/library/${firstId}`, 'DELETE', outsider)).status, 404);
+  assert.equal((await call(e, `/api/library/${firstId}`, 'DELETE', second)).status, 200);
+  assert.equal((await call(e, `/api/library/${secondId}/download`, 'GET', second)).status, 200);
+  assert.equal((await (await call(e, '/api/library', 'GET', second)).json()).photos.length, 1);
+});
+
+test('ownership is checked again before removal when identity recovery overtakes an old request', async () => {
+  const e = env(), a = await join(e), b = await join(e), id = crypto.randomUUID();
+  await upload(e, a, id);
+  const photo = e.sqlite.prepare('SELECT * FROM photos WHERE id=?').get(id);
+  const target = (await (await call(e, '/api/session', 'GET', b)).json()).identity;
+  e.sqlite.prepare('UPDATE photos SET publisher_id=? WHERE id=?').run(target, id);
+  await assert.rejects(erasePhoto(e, e.DB, photo, photo.publisher_id), /ya no está disponible/);
+  assert.equal((await call(e, `/api/library/${id}/download`, 'GET', b)).status, 200);
+});
+
+test('waitlist validates, deduplicates privately, grants no access and is administered only by Google admins', async () => {
+  const e = env();
+  for (const email of ['', 'not an email', 'a@b', 'a@b.com\r\nX:evil', 'a'.repeat(255) + '@b.com']) assert.equal((await call(e, '/api/waitlist', 'POST', '', { email })).status, 400);
+  const result = await call(e, '/api/waitlist', 'POST', '', { email: 'Person@Example.com' });
+  assert.equal(result.status, 200); assert.equal(result.headers.get('Set-Cookie'), null);
+  assert.equal((await call(e, '/api/waitlist', 'POST', '', { email: 'person@example.com' })).status, 200);
+  assert.equal(e.sqlite.prepare('SELECT COUNT(*) n FROM waitlist').get().n, 1);
+  assert.equal((await call(e, '/api/admin/waitlist')).status, 401);
+  const participant = await join(e);
+  assert.equal((await call(e, '/api/admin/waitlist', 'GET', participant)).status, 401);
+  const admin = await adminCookie(e), list = await (await call(e, '/api/admin/waitlist', 'GET', admin)).json();
+  assert.equal(list.entries[0].email, 'person@example.com');
+  assert.equal((await call(e, `/api/admin/waitlist/${list.entries[0].id}`, 'DELETE', participant)).status, 401);
+  assert.equal((await call(e, `/api/admin/waitlist/${list.entries[0].id}`, 'DELETE', admin)).status, 200);
+  assert.equal(e.sqlite.prepare('SELECT COUNT(*) n FROM waitlist').get().n, 0);
+  e.ENTRY_LIMITER.limit = async () => ({ success: false });
+  assert.equal((await call(e, '/api/waitlist', 'POST', '', { email: 'other@example.com' })).status, 429);
+  e.ENTRY_LIMITER.limit = async () => ({ success: true });
+  assert.equal((await call(e, '/api/waitlist', 'POST', '', { email: 'other@example.com' }, { Origin: 'https://evil.example' })).status, 403);
+});
 test('persistent publisher survives re-entry; distinct browsers have distinct ownership', async () => {
   const e = env(), a = await join(e), b = await join(e);
   const onlyIdentity = a.split(';').find(c => c.trim().startsWith('photown_publisher='));

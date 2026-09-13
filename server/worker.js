@@ -13,7 +13,7 @@ async function route(request, env) {
   if (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
     throw new HttpError(403, 'Abre PhoTown mediante HTTPS.');
   }
-  if (env.DB && (url.pathname.startsWith('/api/') || ['/camera','/preview','/my-photos','/wall','/admin'].includes(url.pathname))) {
+  if (env.DB && (url.pathname.startsWith('/api/') || ['/camera','/preview','/my-photos','/wall','/admin','/settings'].includes(url.pathname))) {
     requireConfiguration(env);
     return communityRoute(request, env);
   }
@@ -70,7 +70,7 @@ async function route(request, env) {
     return env.ASSETS.fetch(new Request(new URL('/index.html', url), request));
   }
   // Public app assets only; photographs are authorized by communityRoute.
-  if (['/app.js', '/admin.js', '/processing.js', '/install.js', '/styles.css', '/robots.txt', '/sw.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'].includes(url.pathname)) return env.ASSETS.fetch(request);
+  if (['/app.js', '/photo-ui.js', '/zip.js', '/admin.js', '/processing.js', '/install.js', '/styles.css', '/robots.txt', '/sw.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'].includes(url.pathname)) return env.ASSETS.fetch(request);
   return new Response('Página no encontrada', { status: 404 });
 }
 export default {
@@ -79,7 +79,7 @@ export default {
     let response;
     try { response = await route(request, env); }
     catch (error) {
-      response = error instanceof HttpError ? json({ error: error.message }, error.status) : json({ error: 'No se pudo guardar la fotografía. Inténtalo de nuevo.' }, 503);
+      response = error instanceof HttpError ? json({ error: error.message }, error.status) : json({ error: 'No se pudo completar la operación. Inténtalo de nuevo.' }, 503);
       if (response.status === 429) response.headers.set('Retry-After', '60');
     }
     const secured = new Response(response.body, response);

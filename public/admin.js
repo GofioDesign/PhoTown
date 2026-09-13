@@ -13,6 +13,40 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
     return;
   }
   shell(`<section class="gallery-shell"><a class="brand" href="/" data-route="/">PHOTOWN</a><h1>Administración de grupos</h1><p>${escape(session.email)}</p><button id="logout">Cerrar sesión de administración</button><form id="create-group"><label for="group-name">Nombre del nuevo grupo</label><input id="group-name" maxlength="80" required><button class="primary" type="submit">Crear grupo</button></form><p id="admin-message" role="status"></p><div id="new-invitation"></div><div id="groups" class="group-grid"></div><section id="group-detail" aria-label="Contenido del grupo"></section></section>`);
+  const waiting = document.createElement('section');
+  waiting.innerHTML = '<button id="show-waitlist" aria-expanded="false" aria-controls="waitlist-admin">Lista de espera</button><div id="waitlist-admin" hidden><h2>Personas en lista de espera</h2><p>Solicitudes guardadas sin envío de correos ni acceso automático.</p><div class="waitlist-table"></div><button id="more-waitlist" hidden>Cargar más solicitudes</button><p role="status"></p></div>';
+  root.querySelector('#create-group').before(waiting);
+  let waitCursor, waitLoading = false, waitLoaded = false;
+  const loadWaiting = async () => {
+    if (waitLoading) return; waitLoading = true;
+    const more = waiting.querySelector('#more-waitlist'), report = waiting.querySelector('[role=status]'); more.disabled = true;
+    try {
+      const page = await api('/api/admin/waitlist' + (waitCursor ? '?before=' + encodeURIComponent(waitCursor) : ''));
+      if (!current()) return;
+      for (const entry of page.entries) {
+        const row = document.createElement('article'); row.className = 'member-row';
+        row.innerHTML = '<p class="waiting-email"></p><p class="note"></p><button>Eliminar solicitud</button>';
+        row.querySelector('.waiting-email').textContent = entry.email;
+        row.querySelector('.note').textContent = new Date(entry.created_at).toLocaleDateString('es');
+        row.querySelector('button').onclick = async event => {
+          const dialog = document.createElement('dialog'); dialog.setAttribute('aria-label', 'Eliminar solicitud');
+          dialog.innerHTML = '<h2>¿Eliminar esta solicitud de la lista de espera?</h2><form method="dialog" class="controls"><button value="cancel" autofocus>Cancelar</button><button value="delete">Eliminar solicitud definitivamente</button></form>';
+          root.append(dialog); dialog.showModal();
+          const yes = await new Promise(resolve => dialog.addEventListener('close', () => { resolve(dialog.returnValue === 'delete'); dialog.remove(); event.target.focus(); }, { once: true }));
+          if (!yes) return;
+          event.target.disabled = true;
+          try { await api('/api/admin/waitlist/' + entry.id, { method: 'DELETE' }); row.remove(); report.textContent = 'Solicitud eliminada.'; waiting.querySelector('#show-waitlist').focus(); }
+          catch (error) { report.textContent = error.message; event.target.disabled = false; }
+        };
+        waiting.querySelector('.waitlist-table').append(row);
+      }
+      waitCursor = page.next; waitLoaded = true; more.hidden = !waitCursor; more.textContent = 'Cargar más solicitudes';
+      report.textContent = waiting.querySelector('.waitlist-table').children.length ? '' : 'Todavía no hay solicitudes.';
+    } catch (error) { report.textContent = error.message; more.hidden = false; more.textContent = 'Reintentar carga'; }
+    finally { waitLoading = false; more.disabled = false; }
+  };
+  waiting.querySelector('#show-waitlist').onclick = () => { const panel = waiting.querySelector('#waitlist-admin'); panel.hidden = !panel.hidden; waiting.querySelector('#show-waitlist').setAttribute('aria-expanded', String(!panel.hidden)); if (!panel.hidden && !waitLoaded) loadWaiting(); };
+  waiting.querySelector('#more-waitlist').onclick = loadWaiting;
   const report = text => { if (current()) root.querySelector('#admin-message').textContent = text; };
   const post = (path, data = {}) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   function invitation(target, code) {

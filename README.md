@@ -6,19 +6,21 @@ Dominio de la instalación: https://photown.gofiodesign.eu (acceso mediante invi
 
 La dirección anterior https://photown.photown.workers.dev sigue habilitada durante la transición. Las identidades de participante se guardan por dominio; véase [la guía](docs/google-admin.md).
 
-## Versión actual — Camera, grupos y administración
+## Versión actual — Sprint 2
 
-Implementado: entrada con invitación visible, cámara **en blanco y negro en directo**, captura al tocar el visor o mediante botón/teclado, vista previa, repetir y almacenamiento privado en R2. Identidades pseudónimas persistentes, grupos separados, Mis fotos con descripción opcional y borrado permanente, muro con moderación y administración mediante Google. Interfaz en español, responsive y sin acceso al carrete.
+La invitación visible lleva al muro del grupo. La navegación fija **YO — cámara — grupo activo** sustituye el menú anterior. Los muros son mosaicos de fotografías que conservan su proporción; la cabecera PHOTOWN y el botón de personalización permanecen fijos. El modo zurdo invierte los laterales y se guarda en el dispositivo.
 
-La fotografía se conserva en memoria cuando falla el envío y los reintentos usan el mismo identificador. Los participantes nuevos pasan por moderación; los de confianza publican directamente. El bloqueo y los permisos siempre se comprueban en servidor.
+**YO** reúne todas las copias de la identidad actual, incluso las de otros grupos. Una foto se abre a pantalla completa: ALT para crear/editar descripción, descarga del WebP original disponible y eliminación confirmada. Pulsar prolongadamente activa selección múltiple; también se puede entrar desde Personalización o con Mayús+Espacio. Las descargas múltiples generan un ZIP (hasta 50 fotos y 100 MB por operación); los borrados parciales permiten reintentar las pendientes.
 
-**Todavía no es el MVP completo:** falta Weekly Review y la validación del piloto. El alcance se amplió por petición del usuario para incluir grupos, Google administrativo y gestión de fotos propias. Las capturas anteriores del sprint 1 no tienen autor y no se atribuyen automáticamente a ningún participante. Consulta [Google, permisos y accesibilidad](docs/google-admin.md).
+Se mantienen **copias independientes por grupo**, decisión confirmada para este sprint. La confirmación identifica sus grupos; eliminar una copia no elimina automáticamente otras. La descripción y el alias por grupo continúan separados. El alias solo se muestra en la foto ampliada, nunca como pie permanente del mosaico, y no se sustituye por identificadores.
 
-En Mis fotos, cada fotografía disponible incluye «Descargar fotografía»: descarga el WebP original en blanco y negro, con acceso restringido a su propietario. Próximas prioridades: [UI y cámaras móviles](docs/next-sprint.md).
+La cámara BN y la captura ocupan el viewport sin navegación inferior ni scroll. El disparador está sobre el visor. Las acciones de publicación se superponen a la fotografía: un solo grupo no requiere escoger destino; varios grupos permiten elegir uno o más. El envío vuelve al muro. Las capturas pendientes siguen en memoria y los reintentos conservan identificadores y destinos confirmados.
 
-Alias opcional por grupo con atribución en el muro, imágenes ampliables y cabecera con selector de grupo. Antes de enviar se eligen uno o varios grupos ya autorizados; cada copia mantiene moderación y borrado independientes. Los reintentos omiten destinos confirmados y deduplican respuestas perdidas.
+Personalización reúne añadir grupo, alias, zurdo/diestro, instalación PWA y la identidad necesaria para recuperación administrativa. Google sigue reservado a administradores. Moderación, bloqueo, privacidad R2 y reasignación de identidad permanecen activos.
 
-Disparador sobre el visor, pantalla completa cuando el navegador la admite e instalación como app en modo standalone. «Instalar app» ofrece el diálogo nativo o instrucciones para añadir PhoTown a la pantalla de inicio. La app necesita conexión y no guarda fotos privadas en caché offline.
+**Lista de espera:** el email se guarda en D1; administración permite consultarlo y eliminarlo. Por decisión del usuario no se envían correos ni se concede acceso automático. No necesita proveedor de email. Los duplicados devuelven la misma confirmación sin revelar si la dirección ya estaba registrada.
+
+**Todavía no es el MVP completo:** faltan Weekly Review y la validación del piloto. La alternancia selfie/trasera y las pruebas físicas iPhone/Android siguen pendientes. La PWA necesita conexión y no guarda fotos privadas en caché offline. Consulta [Sprint 2](docs/sprint-2.md), [próximos sprints](docs/next-sprint.md) y [administración](docs/google-admin.md).
 
 ## Ejecutar en local
 

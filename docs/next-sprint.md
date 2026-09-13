@@ -1,10 +1,26 @@
-# Siguiente sprint: interfaz y cámaras móviles
+# Próximos sprints
 
-Prioridades solicitadas por el usuario:
+El rediseño YO — cámara — grupo activo del Sprint 2 se describe en [sprint-2.md](sprint-2.md).
 
-- Mejorar la UI de participante y administración: jerarquía, navegación, claridad de acciones y uso en pantallas pequeñas. Mantener contraste, teclado, lector de pantalla y objetivos táctiles accesibles.
-- Alternar cámara frontal (selfie) y trasera mediante un control visible y accesible. Detener la cámara anterior antes de abrir la otra, gestionar dispositivos con una sola cámara y errores sin perder capturas.
-- Mantener blanco y negro en directo y en la captura con ambas cámaras. Comprobar orientación y coherencia entre visor y fotografía, incluido el efecto espejo de la frontal.
-- Probar en Safari/iPhone y Chrome/Android físicos, vertical/horizontal, permisos y regreso tras pasar a otra aplicación.
+## Sprint 3 propuesto: cámara móvil y accesibilidad
 
-Estas mejoras quedan planificadas, no implementadas en esta entrega. Weekly Review y validación del piloto continúan pendientes en el alcance general.
+- Alternar frontal/selfie y trasera con control accesible; detener la cámara anterior, admitir una sola cámara y recuperar errores sin perder capturas.
+- Mantener BN en ambas cámaras y comprobar encuadre, orientación y espejo de la frontal.
+- Probar Safari/iPhone y Chrome/Android físicos: permisos, vertical/horizontal, instalación, teclado, descarga individual/ZIP, retorno desde otra aplicación.
+- Revisar con VoiceOver, TalkBack, ampliación y personas con distintas discapacidades; ajustar tamaño, foco, contraste y pulsación prolongada según resultados.
+
+## Sprint 4 propuesto: Weekly Review
+
+- Selección de semana, orden estable, contador y recorrido de fotos.
+- Flechas y Escape por teclado; pantalla de escritorio, TV y proyector.
+- Evaluar tamaño/calidad de imágenes reales antes de crear derivados para el muro.
+
+## Preparación del piloto
+
+- Revisión de privacidad, borrado, lista de espera, límites y procedimientos administrativos.
+- Evaluar decodificación/normalización BN en servidor para clientes manipulados.
+- Piloto con 5–10 personas durante una semana; recoger incidencias y aprendizaje.
+
+## Más adelante
+
+Ayuda opcional de exposición: señalar zonas de altas luces y sombras recortadas, con indicador que no dependa exclusivamente del rojo. Definir umbrales y comprobar utilidad real antes de desarrollarlo.

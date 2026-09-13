@@ -53,3 +53,17 @@ Documentación oficial consultada para la implementación:
 - Service worker sin caché de fotografías, sesiones, invitaciones ni respuestas privadas; pantalla informativa cuando falla una navegación sin conexión.
 
 Referencias: [MDN: aplicaciones instalables](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Making_PWAs_installable) y [modo standalone](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/How_to/Create_a_standalone_app).
+
+## Sprint 2 — 13 de septiembre de 2026
+
+- 22 pruebas de servidor superadas: archivo personal entre grupos, aislamiento entre propietarios, conservación de copias independientes y autorización reiterada al borrar tras una recuperación de identidad; lista de espera, validación, deduplicación, acceso administrativo y borrado.
+- 11 recorridos de Chrome con D1/R2 locales superados en la ejecución final. Incluyen los flujos anteriores de captura BN, permisos, reintentos, renovación de sesión, moderación y recuperación, adaptados al nuevo modelo de navegación.
+- YO y muro en mosaico, imagen completa, ALT con metadato accesible, alias solo en ampliación, modo zurdo persistente, cambio de grupo, envío a varios grupos y borrado de una sola copia verificados.
+- Pulsación larga, alternativa de selección desde Personalización, ZIP de originales y borrado múltiple interrumpido/reintentado verificados. El contenido del ZIP coincide byte a byte con las descargas individuales; un lector estándar independiente comprueba su integridad CRC.
+- Axe sin violaciones automáticas WCAG 2 A/AA y 2.1 AA en entrada, formulario de espera, administración, cámara, preview, YO, muro, foto ampliada, selección y Personalización. No sustituye validación manual ni certifica conformidad.
+- Capturas visuales revisadas en móvil y escritorio. Cámara/shutter dentro del viewport a 320×568, 360×640 y 390×844; entrada/salida de pantalla completa y ayuda de instalación verificadas.
+- Sintaxis y empaquetado correctos. Migración 0003 aplicada en local y producción: solo tabla/índice de espera.
+- Versión publicada: `5b05e0c5-0e2a-423d-934b-4f3c6c2a1c39`.
+- HTTPS del dominio personalizado: entrada, módulos JS, CSS y manifiesto responden 200. Los cinco recursos modificados coinciden por SHA-256 con los archivos probados. Archivo personal y lista administrativa sin sesión responden 401. Email inválido rechazado con 400 sin registro. Dominio workers.dev sigue sirviendo la versión nueva.
+- No se crearon participantes, fotos ni solicitudes reales para esta comprobación remota. Las pruebas funcionales con datos se realizaron localmente.
+- Pendiente: cámaras e instalación en iPhone/Android físicos, lectores de pantalla y validación con participantes. Cambio selfie/trasera y Weekly Review permanecen para próximos sprints.

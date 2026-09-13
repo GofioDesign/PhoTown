@@ -1,6 +1,7 @@
 import { capture } from './processing.js';
 import { renderAdmin } from './admin.js';
 import { setupInstall } from './install.js';
+import { photoUI } from './photo-ui.js';
 
 const root = document.querySelector('#app');
 let stream;
@@ -14,7 +15,7 @@ let groupId = '';
 let memberGroups = [];
 let invitedCode = '';
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const statusLabels = { uploading: 'Envío incompleto', pending: 'Pendiente de revisión', published: 'En el muro', hidden: 'Fuera del muro', deleting: 'Borrado pendiente' };
+const ui = photoUI({ root, api, shell, navigate, state: () => ({ id: groupId, name: groupName, groups: memberGroups, refresh: refreshSession }), current: version => version === renderVersion, confirmDeletion });
 
 function stopCamera() {
   stream?.getTracks().forEach(track => track.stop());
@@ -56,6 +57,7 @@ function navigate(path, replace = false) {
 }
 function shell(content) {
   root.innerHTML = content;
+  document.body.classList.toggle('immersive', Boolean(root.querySelector('.camera-shell')));
   setupInstall(root);
   root.setAttribute('aria-busy', 'false');
   const heading = root.querySelector('h1, h2');
@@ -64,22 +66,13 @@ function shell(content) {
     event.preventDefault();
     navigate(element.dataset.route);
   }));
-  const selector = root.querySelector('#current-group');
-  if (selector) selector.onchange = async () => {
-    if (busy) { selector.value = groupId; return; }
-    busy = true; ++renderVersion; stopCamera();
-    root.querySelectorAll('button,input,select,textarea').forEach(control => control.disabled = true);
-    try {
-      const result = await api('/api/groups/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group: selector.value }) });
-      groupId = result.group.id; groupName = result.group.name; busy = false; render();
-    } catch (error) { busy = false; render(); message(error.message); }
-  };
+
 }
 function connection() {
   message(navigator.onLine ? '' : 'Sin conexión. Puedes fotografiar y enviar cuando vuelva la conexión.', '#connection');
 }
-function topbar(label) {
-  return `<header class="topbar"><nav class="breadcrumb" aria-label="Ruta actual"><a class="brand" href="/" data-route="/">PHOTOWN</a><span aria-hidden="true"> / </span><label class="sr-only" for="current-group">Grupo actual</label><select id="current-group">${(memberGroups.length ? memberGroups : [{ id: groupId, name: groupName }]).map(group => `<option value="${escape(group.id)}" ${group.id === groupId ? 'selected' : ''}>${escape(group.name)}</option>`).join('')}</select><span aria-hidden="true"> / </span><span aria-current="page">${label}</span></nav>${authenticated ? '<nav aria-label="Menú de participante"><a href="/camera" data-route="/camera">Cámara</a><a href="/my-photos" data-route="/my-photos">Mis fotos</a><a href="/wall" data-route="/wall">Muro</a><a href="/enter" data-route="/enter">Añadir otro grupo</a><button type="button" data-install>Instalar app</button></nav>' : ''}</header>`;
+function topbar() {
+  return '<header class="capture-header"><a class="brand" href="/wall" data-route="/wall">PHOTOWN</a><button data-route="/wall" aria-label="Volver al muro">×</button></header>';
 }
 async function refreshSession() {
   const session = await api('/api/session'); authenticated = session.authenticated;
@@ -89,6 +82,21 @@ async function refreshSession() {
 function entryForm(renew = false) {
   shell(`<section class="entry"><p class="eyebrow">PHOTOWN</p><h2>${renew ? 'Vuelve a entrar.' : 'Fotografía lo que te llame la atención.'}</h2><p>En PhoTown fotografiamos en blanco y negro.<br>Después lo miraremos juntos.</p><form id="entry"><label for="code">Código de invitación</label><input id="code" name="code" type="text" required maxlength="256" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="message"><button class="primary" type="submit">${renew ? 'Continuar con mi fotografía' : 'Entrar en PhoTown'}</button></form><p id="message" class="message" role="alert"></p><p class="note">${renew ? 'Tu captura sigue aquí mientras mantengas esta página abierta.' : 'Solo necesitas tu invitación. No te pedimos nombre ni correo.'}</p></section>`);
   document.querySelector('#code').value = invitedCode;
+  if (!renew) {
+    const waitlist = document.createElement('section'); waitlist.className = 'waitlist';
+    waitlist.innerHTML = '<button class="waitlist-toggle" aria-expanded="false" aria-controls="waitlist-form">Quiero probarlo</button><form id="waitlist-form" hidden novalidate><label for="waitlist-email">Correo electrónico</label><input id="waitlist-email" name="email" type="email" autocomplete="email" maxlength="254" required aria-describedby="waitlist-help waitlist-message"><p class="note" id="waitlist-help">Guardaremos tu email en la lista de espera de PhoTown para poder avisarte cuando haya acceso. Solo podrá consultarlo el equipo administrador. Esta solicitud no da acceso a los grupos.</p><button>Entrar en lista de espera</button><p id="waitlist-message" role="status"></p></form>';
+    root.querySelector('.entry').append(waitlist);
+    const toggle = waitlist.querySelector('.waitlist-toggle'), form = waitlist.querySelector('form'), input = form.querySelector('input'), report = form.querySelector('[role=status]');
+    toggle.onclick = () => { form.hidden = !form.hidden; toggle.setAttribute('aria-expanded', String(!form.hidden)); if (!form.hidden) input.focus(); };
+    form.onsubmit = async event => {
+      event.preventDefault(); input.removeAttribute('aria-invalid');
+      if (!input.value.trim() || !input.validity.valid || !input.value.trim().split('@')[1]?.includes('.')) { input.setAttribute('aria-invalid', 'true'); report.textContent = 'Introduce un correo electrónico válido.'; input.focus(); return; }
+      const button = form.querySelector('button'); if (button.disabled) return; button.disabled = true; report.textContent = 'Guardando tu solicitud…';
+      try { await api('/api/waitlist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: input.value }) }); report.textContent = 'Gracias. Te avisaremos cuando puedas entrar.'; input.value = ''; }
+      catch (error) { report.textContent = error.message; }
+      finally { button.disabled = false; }
+    };
+  }
   document.querySelector('#entry').addEventListener('submit', async event => {
     event.preventDefault();
     if (busy) return;
@@ -102,7 +110,7 @@ function entryForm(renew = false) {
       authenticated = true;
       invitedCode = '';
       busy = false;
-      navigate(shot ? '/preview' : '/camera', true);
+      navigate(shot ? '/preview' : '/wall', true);
     } catch (error) { message(error.message); }
     finally { busy = false; button.disabled = false; }
   });
@@ -124,6 +132,7 @@ async function camera(version) {
   root.querySelector('#capture-area').append(root.querySelector('.controls'));
   if (document.fullscreenEnabled) {
     const fullscreen = document.createElement('button'); fullscreen.id = 'fullscreen'; fullscreen.type = 'button'; fullscreen.textContent = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa';
+    fullscreen.setAttribute('aria-label', fullscreen.textContent);
     fullscreen.onclick = async () => {
       try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); fullscreen.textContent = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa'; }
       catch { message('Puedes instalar PhoTown para abrirla sin la barra del navegador.'); }
@@ -177,14 +186,15 @@ async function camera(version) {
 }
 function preview() {
   if (!shot) { navigate('/camera', true); return; }
-  shell(`<section class="camera-shell">${topbar('TU FOTOGRAFÍA')}<h1 class="sr-only">Vista previa de tu fotografía</h1><div class="viewfinder"><img class="photograph" id="photo" alt="Tu fotografía en blanco y negro"></div><div class="controls"><button id="again">Repetir</button><button class="primary" id="publish">Enviar</button></div><p id="message" class="message" role="status"></p><p id="connection" class="connection" role="status"></p></section>`);
+  shell(`<section class="camera-shell capture-preview">${topbar()}<h1 class="sr-only">Vista previa de tu fotografía</h1><div class="viewfinder"><img class="photograph" id="photo" alt="Tu fotografía en blanco y negro"></div><div class="controls"><button id="again">Repetir</button><button class="primary" id="publish">Enviar</button></div><p id="message" class="message" role="status"></p><p id="connection" class="connection" role="status"></p></section>`);
   document.querySelector('#photo').src = shotUrl;
   const destinations = document.createElement('fieldset'); destinations.className = 'destinations';
-  destinations.innerHTML = '<legend>Enviar esta fotografía a</legend><p class="note">Selecciona uno o varios grupos. Cada copia se modera y se gestiona en su grupo.</p>';
+  destinations.innerHTML = '<legend>Publicar en</legend>';
+  destinations.hidden = memberGroups.filter(group => group.status !== 'BLOCKED').length <= 1;
   const choices = shot.deliveries || memberGroups.filter(group => group.status !== 'BLOCKED');
   for (const group of choices) {
     const label = document.createElement('label'), input = document.createElement('input'); input.type = 'checkbox'; input.value = group.id;
-    input.checked = Boolean(shot.deliveries) || group.id === groupId; input.disabled = Boolean(shot.deliveries);
+    input.checked = Boolean(shot.deliveries) || group.id === groupId || choices.length === 1; input.disabled = Boolean(shot.deliveries);
     label.append(input, document.createTextNode(group.name)); destinations.append(label);
   }
   root.querySelector('.controls').before(destinations);
@@ -210,12 +220,14 @@ function preview() {
       for (const destination of shot.deliveries) {
         if (!destination.result) destination.result = await api('/api/photos', { method: 'POST', headers: { 'Content-Type': 'image/webp', 'Idempotency-Key': destination.photoId, 'X-Photown-Group': destination.id }, body: shot.blob });
       }
-      const result = { status: shot.deliveries.some(destination => destination.result.status === 'pending') ? 'pending' : 'published' };
-      const delivered = shot.deliveries.map(destination => destination.name).join(', ');
+      const pending = shot.deliveries.some(destination => destination.result.status === 'pending');
       clearShot();
-      shell(`<section class="entry"><p class="eyebrow">PHOTOWN</p><h2>Fotografía guardada.</h2><p>${result.status === 'pending' ? 'La persona que coordina el grupo la revisará antes de mostrarla en el muro.' : 'Gracias por compartir tu mirada.'}</p><button id="continue" class="primary">Seguir fotografiando</button><a class="button secondary-link" href="/my-photos" data-route="/my-photos">Ver mis fotos</a></section>`);
-      document.querySelector('#continue').addEventListener('click', () => navigate('/camera', true));
-      const receipt = document.createElement('p'); receipt.textContent = `Enviada a: ${delivered}`; root.querySelector('h2').after(receipt);
+      busy = false;
+      navigate('/wall', true);
+      const receipt = document.createElement('p'); receipt.className = 'publication-receipt'; receipt.setAttribute('role', 'status');
+      receipt.textContent = pending ? 'Fotografía guardada. Pendiente de revisión.' : 'Fotografía publicada.';
+      root.append(receipt);
+      setTimeout(() => receipt.remove(), 8000);
     } catch (error) {
       if (error.status === 401) {
         authenticated = false;
@@ -228,102 +240,18 @@ function preview() {
     } finally { busy = false; buttons.forEach(button => button.disabled = false); }
   });
 }
-async function confirmDeletion() {
+async function confirmDeletion(items = []) {
   const previous = document.activeElement;
   const dialog = document.createElement('dialog');
   dialog.setAttribute('aria-labelledby', 'delete-title');
   dialog.setAttribute('aria-describedby', 'delete-detail');
-  dialog.innerHTML = '<h2 id="delete-title">¿Borrar esta fotografía definitivamente?</h2><p id="delete-detail">Se retirará de tus fotos, del muro colectivo y del almacenamiento de PhoTown. No podrás recuperarla.</p><form method="dialog" class="controls"><button value="cancel" autofocus>Conservar fotografía</button><button value="delete">Borrar definitivamente</button></form>';
+  const groups = [...new Set(items.map(photo => photo.group_name).filter(Boolean))];
+  dialog.innerHTML = `<h2 id="delete-title">¿Eliminar ${items.length > 1 ? 'estas ' + items.length + ' fotografías' : 'esta foto'}?</h2><p id="delete-detail">Se borrará${items.length > 1 ? 'n' : ''} definitivamente del almacenamiento y del muro${groups.length ? ' de ' + escape(groups.join(', ')) : ' colectivo'}. Las copias de otros grupos que no selecciones se conservan. No podrás recuperarla${items.length > 1 ? 's' : ''}.</p><form method="dialog" class="controls"><button value="cancel" autofocus>Cancelar</button><button value="delete">Eliminar definitivamente</button></form>`;
   root.append(dialog);
   return new Promise(resolve => {
     dialog.addEventListener('close', () => { const yes = dialog.returnValue === 'delete'; dialog.remove(); previous?.focus(); resolve(yes); }, { once: true });
     dialog.showModal();
   });
-}
-async function gallery(version, mine) {
-  shell(`<section class="gallery-shell">${topbar(mine ? 'MIS FOTOS' : 'MURO COLECTIVO')}<h1>${mine ? 'Mis fotos' : 'Muro colectivo'}</h1><p class="note">${escape(groupName)}${mine ? ' · Estas fotos pertenecen a tu identidad en este navegador. Si borras sus cookies, perderás el acceso a ellas.' : ''}</p><p id="message" class="message" role="status">Cargando fotografías…</p><div id="photos" class="photo-grid"></div><button id="more" hidden>Cargar más fotografías</button></section>`);
-  const container = root.querySelector('#photos'), more = root.querySelector('#more');
-  if (mine) {
-    const identityBox = document.createElement('div');
-    identityBox.innerHTML = '<p>Si pierdes el acceso, el administrador puede ayudarte a recuperar tus fotos.</p><label>Mi identidad<input readonly autocomplete="off"></label><button type="button">Copiar mi identidad</button><p role="status"></p>';
-    container.before(identityBox);
-    try {
-      const session = await api('/api/session');
-      if (version !== renderVersion) return;
-      identityBox.querySelector('input').value = session.identity || '';
-      const aliasForm = document.createElement('form');
-      aliasForm.innerHTML = '<label for="my-alias">Mi alias (opcional)</label><input id="my-alias" maxlength="40" autocomplete="nickname" aria-describedby="alias-help"><p id="alias-help" class="note">Aparecerá junto a tus fotos en el muro de este grupo. Déjalo vacío para retirar la atribución.</p><button>Guardar alias</button><p role="status"></p>';
-      aliasForm.querySelector('input').value = session.alias || '';
-      identityBox.before(aliasForm);
-      aliasForm.onsubmit = async event => {
-        event.preventDefault(); const button = aliasForm.querySelector('button'); button.disabled = true;
-        try { const result = await api('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ alias: aliasForm.querySelector('input').value }) }); aliasForm.querySelector('input').value = result.alias; aliasForm.querySelector('[role=status]').textContent = 'Alias guardado.'; }
-        catch (error) { aliasForm.querySelector('[role=status]').textContent = error.message; }
-        finally { button.disabled = false; }
-      };
-      identityBox.querySelector('button').onclick = async () => {
-        try { await navigator.clipboard.writeText(session.identity); identityBox.querySelector('[role=status]').textContent = 'Identidad copiada.'; }
-        catch { identityBox.querySelector('input').select(); identityBox.querySelector('[role=status]').textContent = 'Copia la identidad seleccionada.'; }
-      };
-    } catch (error) { identityBox.querySelector('[role=status]').textContent = error.message; }
-  }
-  let cursor, loading = false;
-  const load = async () => {
-    if (loading) return;
-    loading = true; more.disabled = true;
-    try {
-      const page = await api(`${mine ? '/api/my-photos' : '/api/wall'}${cursor ? '?before=' + encodeURIComponent(cursor) : ''}`);
-      if (version !== renderVersion) return;
-      for (const photo of page.photos) {
-        const card = document.createElement('article'); card.className = 'photo-card';
-        const unavailable = ['uploading','deleting'].includes(photo.status);
-        card.innerHTML = `${unavailable ? '<p>La fotografía no está disponible.</p>' : `<img loading="lazy" src="/api/images/${photo.id}" alt="${escape(photo.description || 'Fotografía en blanco y negro, sin descripción disponible.')}">`}${mine ? `<p class="note">${escape(statusLabels[photo.status])} · ${escape(new Date(photo.created_at).toLocaleDateString('es'))}</p><form class="description-form"><label for="description-${photo.id}">Descripción de la imagen (opcional)</label><textarea id="description-${photo.id}" maxlength="500" rows="3">${escape(photo.description)}</textarea><button type="submit">Guardar descripción</button></form><button class="delete-photo">${photo.status === 'deleting' ? 'Reintentar borrado' : 'Borrar fotografía'}</button><p class="card-message" role="status"></p>` : ''}`;
-        if (mine) {
-          if (!unavailable) {
-            const download = document.createElement('a'); download.className = 'button secondary-link';
-            download.href = `/api/my-photos/${photo.id}/download`; download.download = `photown-${photo.id}.webp`; download.textContent = 'Descargar fotografía';
-            card.querySelector('.description-form').before(download);
-          }
-          const status = card.querySelector('.card-message');
-          card.querySelector('.description-form').addEventListener('submit', async event => {
-            event.preventDefault(); const button = event.target.querySelector('button'); button.disabled = true;
-            try { await api(`/api/my-photos/${photo.id}/description`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ description: event.target.querySelector('textarea').value }) }); status.textContent = 'Descripción guardada.'; const img = card.querySelector('img'); if (img) img.alt = event.target.querySelector('textarea').value || 'Fotografía en blanco y negro, sin descripción disponible.'; }
-            catch (error) { status.textContent = error.message; } finally { button.disabled = false; }
-          });
-          card.querySelector('.delete-photo').addEventListener('click', async event => {
-            if (!(await confirmDeletion())) return;
-            event.target.disabled = true;
-            try { await api(`/api/my-photos/${photo.id}`, { method: 'DELETE' }); card.remove(); message('Fotografía borrada definitivamente.'); root.querySelector('h1').focus(); }
-            catch (error) { status.textContent = `${error.message} Puedes reintentar el borrado.`; event.target.disabled = false; }
-          });
-        }
-        if (!mine && !unavailable) {
-          const img = card.querySelector('img');
-          const open = document.createElement('button'); open.className = 'open-photo'; open.setAttribute('aria-label', 'Ver fotografía a tamaño completo');
-          img.replaceWith(open); open.append(img); open.onclick = () => showPhoto(photo);
-          if (photo.alias) { const credit = document.createElement('p'); credit.className = 'photo-credit'; credit.textContent = `Foto de ${photo.alias}`; card.append(credit); }
-        }
-        container.append(card);
-      }
-      cursor = page.next; more.hidden = !cursor;
-      message(container.children.length ? '' : mine ? 'Todavía no has enviado fotografías a este grupo.' : 'Todavía no hay fotografías aprobadas en este grupo.');
-    } catch (error) {
-      if (version !== renderVersion) return;
-      message(error.message); more.hidden = false; more.textContent = 'Reintentar carga';
-      if (error.status === 401) { authenticated = false; navigate('/enter', true); }
-    } finally { loading = false; more.disabled = false; }
-  };
-  more.addEventListener('click', load); await load();
-}
-function showPhoto(photo) {
-  const previous = document.activeElement, dialog = document.createElement('dialog'); dialog.className = 'photo-viewer';
-  dialog.setAttribute('aria-label', 'Fotografía a tamaño completo');
-  dialog.innerHTML = '<form method="dialog"><button autofocus>Cerrar fotografía</button></form><img><p class="photo-credit"></p><a target="_blank" rel="noopener">Abrir imagen original</a>';
-  const img = dialog.querySelector('img'); img.src = `/api/images/${photo.id}`; img.alt = photo.description || 'Fotografía sin descripción disponible';
-  dialog.querySelector('p').textContent = photo.alias ? `Foto de ${photo.alias}` : '';
-  dialog.querySelector('a').href = img.src;
-  dialog.addEventListener('close', () => { dialog.remove(); previous?.focus(); }, { once: true });
-  root.append(dialog); dialog.showModal();
 }
 function render() {
   const version = ++renderVersion;
@@ -338,21 +266,22 @@ function render() {
   }
   const path = location.pathname;
   if (path === '/') {
-    if (authenticated) { navigate(shot ? '/preview' : '/camera', true); return; }
+    if (authenticated) { navigate(shot ? '/preview' : '/wall', true); return; }
     shell(`<section class="entry"><h1 class="wordmark">PHOTOWN</h1><p class="intro">Un diario fotográfico compartido.</p><button class="primary" id="enter">Entrar</button><button type="button" data-install>Instalar app</button><a class="secondary-link" href="/admin" data-route="/admin">Administración</a></section>`);
-    document.querySelector('#enter').addEventListener('click', () => navigate(authenticated ? '/camera' : '/enter'));
+    document.querySelector('#enter').addEventListener('click', () => navigate(authenticated ? '/wall' : '/enter'));
   } else if (path === '/enter') entryForm(Boolean(shot));
   else if (path === '/admin') renderAdmin({ root, api, shell, current: () => version === renderVersion, confirmDeletion });
-  else if (['/camera','/preview','/my-photos','/wall'].includes(path)) {
+  else if (['/camera','/preview','/my-photos','/wall','/settings'].includes(path)) {
     if (!authenticated) { navigate('/enter', true); return; }
-    if (path === '/camera') camera(version);
+    if (path === '/camera') { if (shot) navigate('/preview', true); else camera(version); }
     else if (path === '/preview') preview();
-    else gallery(version, path === '/my-photos');
+    else if (path === '/settings') ui.settings(version);
+    else ui.gallery(version, path === '/my-photos');
   } else shell(`<section class="entry"><h1>Esta página no existe.</h1><a class="button" href="/" data-route="/">Volver a PhoTown</a></section>`);
 }
 addEventListener('popstate', () => { if (!busy) render(); });
 addEventListener('online', connection);
-document.addEventListener('fullscreenchange', () => { const button = document.querySelector('#fullscreen'); if (button) button.textContent = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa'; });
+document.addEventListener('fullscreenchange', () => { const button = document.querySelector('#fullscreen'); if (button) { button.textContent = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa'; button.setAttribute('aria-label', button.textContent); } });
 addEventListener('offline', connection);
 addEventListener('pagehide', () => { ++renderVersion; stopCamera(); });
 addEventListener('pageshow', event => { if (event.persisted) render(); });
