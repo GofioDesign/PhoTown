@@ -21,7 +21,9 @@ Las pruebas físicas en Safari/iPhone, Android, cambios de orientación y proyec
 - Verificado: r2.dev deshabilitado y sin dominios públicos del bucket.
 - Invitación y firma de sesión de producción configuradas como secretos independientes del entorno local. Sus valores no se incluyen en Git.
 - Cloudflare confirma la ruta workers.dev habilitada y el DNS resuelve.
-- Pendiente: comprobación completa de HTTPS/envío desde internet. En la comprobación inicial falló la negociación TLS, antes de llegar a la aplicación. No se ha confirmado aún la causa ni la recuperación; no se debe dar la instalación por validada para el piloto.
+- Comprobación HTTPS remota superada: entrada disponible, Camera privada y envío sin sesión rechazado; invitación correcta crea cookie Secure/HttpOnly/SameSite=Strict.
+- Envío real al bucket europeo superado: primera petición 201 y reintento 200 con el mismo identificador. Se descargó la imagen sintética para comprobar el archivo y se retiró exclusivamente ese objeto de R2 al terminar.
+- La negociación TLS falló inicialmente tras crear el subdominio y funcionó en la comprobación posterior, sin cambios adicionales en el Worker. Las pruebas físicas del piloto siguen pendientes.
 
 Documentación oficial consultada para la implementación:
 
