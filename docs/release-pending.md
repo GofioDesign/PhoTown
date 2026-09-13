@@ -1,19 +1,13 @@
-# Cierre de implementaciones — pendiente de publicación
+# Cierre de implementaciones — publicado
 
-El usuario cierra el alcance con las implementaciones actuales, sin nuevas funciones.
+El alcance acordado queda implementado y publicado, sin añadir nuevas funciones.
 
-Publicado: descarga de fotografías propias (versión Cloudflare 91f545e2-23ef-47d4-9aa4-046ca60c2589), además de administración, invitaciones y recuperación de identidad anteriores.
+- Pruebas pendientes de navegación PHOTOWN, conservación de grupo/captura, destinos múltiples y cámara vertical/pantalla completa: superadas al retomar la ejecución.
+- Versión Cloudflare: `ac4d40b5-4ad7-4751-9a34-45e9b9f5ca6e`.
+- Dominio definitivo: https://photown.gofiodesign.eu; workers.dev continúa disponible.
+- HTTPS 200 comprobado en portada, manifiesto standalone, ambos iconos, módulos de app/instalación, service worker y sesión administrativa.
+- Migración 0002 de alias ya aplicada en local y producción.
 
-Pendiente de desplegar: alias, muro ampliado, selector de grupos y envíos múltiples, cámara vertical con disparador superpuesto, pantalla completa, instalación PWA y navegación PHOTOWN que conserva grupo/captura.
+Incluye descarga de fotos propias, alias, muro ampliado, selección y envío a varios grupos, disparador sobre el visor, pantalla completa cuando está disponible, instalación PWA y navegación PHOTOWN que conserva el grupo y la captura pendiente.
 
-La migración 0002_participant_alias.sql ya se aplicó correctamente tanto en local como en producción. Es aditiva y compatible con la versión publicada.
-
-Pruebas: 19 de servidor superadas. Los nueve recorridos de navegador se comprobaron; los casos corregidos se repitieron individualmente. El último cambio de navegación de PHOTOWN tiene sintaxis válida y pruebas añadidas, pero su ejecución fue bloqueada por la revisión automática al agotarse el uso de la cuenta. No se debe afirmar que ese último recorrido pasó.
-
-Para completar cuando vuelva a estar disponible la ejecución autorizada:
-
-1. Ejecutar los recorridos de navegador `group destinations` y `portrait camera` (incluyen mantener grupo/captura al pulsar PHOTOWN).
-2. Publicar con Wrangler y comprobar HTTPS, manifiesto, iconos y módulos servidos.
-3. Subir el commit local a origin/main. No volver a crear recursos, cambiar DNS ni rotar secretos.
-
-Pruebas físicas de instalación/cámara iPhone y Android siguen pendientes. UI general y alternancia selfie/trasera quedan para el siguiente sprint.
+Las pruebas físicas de instalación/cámara en iPhone y Android siguen pendientes. La mejora general de UI y la alternancia selfie/trasera quedan para el siguiente sprint.
