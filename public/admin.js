@@ -16,11 +16,15 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
   const report = text => { if (current()) root.querySelector('#admin-message').textContent = text; };
   const post = (path, data = {}) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   function invitation(target, code) {
-    target.innerHTML = '<p>Copia este código de invitación. Se muestra ahora y no se podrá consultar después; puedes generar otro.</p><p class="invitation"></p><button type="button">Copiar código</button><p role="status"></p>';
+    const link = new URL('/enter', location.origin);
+    link.searchParams.set('inv', code);
+    target.innerHTML = '<p>Comparte el enlace para entrar con el código ya rellenado. Guarda esta invitación: se muestra ahora y puedes generar otra después.</p><p class="invitation"></p><button type="button" data-copy="code">Copiar código</button><label>Enlace de invitación<input class="invitation-link" type="url" readonly></label><button type="button" data-copy="link">Copiar enlace de invitación</button><p role="status"></p>';
     target.querySelector('.invitation').textContent = code;
-    target.querySelector('button').onclick = async () => {
-      try { await navigator.clipboard.writeText(code); target.querySelector('[role=status]').textContent = 'Código copiado.'; }
-      catch { target.querySelector('[role=status]').textContent = 'Selecciona el código visible y cópialo manualmente.'; }
+    target.querySelector('.invitation-link').value = link.href;
+    for (const button of target.querySelectorAll('[data-copy]')) button.onclick = async () => {
+      const isLink = button.dataset.copy === 'link';
+      try { await navigator.clipboard.writeText(isLink ? link.href : code); target.querySelector('[role=status]').textContent = isLink ? 'Enlace copiado.' : 'Código copiado.'; }
+      catch { target.querySelector('[role=status]').textContent = 'Selecciona la invitación visible y cópiala manualmente.'; }
     };
   }
   async function groups() {

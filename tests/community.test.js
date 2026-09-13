@@ -90,8 +90,9 @@ test('moderation and groups are server-authorized; published images stay within 
 test('invitation rotation does not bootstrap the old code again; admin allowlist is checked each request', async () => {
   const e = env(); await join(e); const admin = await adminCookie(e);
   const rotated = await (await call(e, '/api/admin/groups/default/invitation', 'POST', admin)).json();
+  assert.match(rotated.code, /^[A-HJKMNP-Z2-9]{8}$/);
   assert.equal((await call(e, '/api/enter', 'POST', '', { code: e.INVITE_CODE })).status, 401);
-  await join(e, rotated.code);
+  await join(e, ' ' + rotated.code.toLowerCase() + ' ');
   e.ADMIN_EMAILS = 'other@example.com';
   assert.equal((await call(e, '/api/admin/groups', 'GET', admin)).status, 401);
 });

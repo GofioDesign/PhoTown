@@ -23,7 +23,8 @@ El backend verifica firma, emisor, audiencia, caducidad, nonce, email verificado
 ## Funciones del panel
 
 - Crear grupos independientes.
-- Generar invitaciones nuevas y visibles; se muestra el código una vez y solo se conserva su hash.
+- Generar invitaciones nuevas de 8 caracteres, con letras mayúsculas y números, sin 0/O/1/I/L. Se aceptan también al escribirlas en minúsculas. Los códigos anteriores siguen funcionando hasta rotarlos.
+- Copiar código o enlace `/enter?inv=CODIGO`. También se admite `/?inv=CODIGO`: rellena el código visible y basta pulsar Entrar. Se retira el parámetro de la barra de direcciones al cargar. El código se muestra una vez en administración y solo se conserva su hash.
 - Abrir/cerrar grupos. Cerrar el grupo impide inmediatamente el acceso de sus participantes.
 - Revisar fotografías, aprobarlas, ocultarlas o eliminarlas definitivamente.
 - Asignar confianza o bloquear a un participante dentro de un grupo.

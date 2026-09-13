@@ -141,7 +141,13 @@ test('admin can create group, rotate invitation, moderate and block participants
   await card.getByRole('button', { name: 'Generar nueva invitación' }).click();
   await expect(card.locator('.invitation')).toBeVisible();
   const invitation = await card.locator('.invitation').textContent();
-  await page.goto('/enter'); await page.getByLabel('Código de invitación').fill(invitation);
+  expect(invitation).toMatch(/^[A-HJKMNP-Z2-9]{8}$/);
+  const invitationLink = await card.getByLabel('Enlace de invitación').inputValue();
+  expect(new URL(invitationLink).searchParams.get('inv')).toBe(invitation);
+  await expect(card.getByRole('button', { name: 'Copiar enlace de invitación', exact: true })).toBeVisible();
+  await page.goto(invitationLink);
+  await expect(page.getByLabel('Código de invitación')).toHaveValue(invitation);
+  await expect(page).toHaveURL(/\/enter$/);
   await page.getByRole('button', { name: 'Entrar en PhoTown' }).click();
   await expect(page.getByRole('button', { name: 'Fotografiar', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Fotografiar', exact: true }).click();

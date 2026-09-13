@@ -9,6 +9,7 @@ let busy = false;
 let renderVersion = 0;
 let authenticated = false;
 let groupName = '';
+let invitedCode = '';
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const statusLabels = { uploading: 'Envío incompleto', pending: 'Pendiente de revisión', published: 'En el muro', hidden: 'Fuera del muro', deleting: 'Borrado pendiente' };
 
@@ -68,6 +69,7 @@ function topbar(label) {
 }
 function entryForm(renew = false) {
   shell(`<section class="entry"><p class="eyebrow">PHOTOWN</p><h2>${renew ? 'Vuelve a entrar.' : 'Fotografía lo que te llame la atención.'}</h2><p>En PhoTown fotografiamos en blanco y negro.<br>Después lo miraremos juntos.</p><form id="entry"><label for="code">Código de invitación</label><input id="code" name="code" type="text" required maxlength="256" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="message"><button class="primary" type="submit">${renew ? 'Continuar con mi fotografía' : 'Entrar en PhoTown'}</button></form><p id="message" class="message" role="alert"></p><p class="note">${renew ? 'Tu captura sigue aquí mientras mantengas esta página abierta.' : 'Solo necesitas tu invitación. No te pedimos nombre ni correo.'}</p></section>`);
+  document.querySelector('#code').value = invitedCode;
   document.querySelector('#entry').addEventListener('submit', async event => {
     event.preventDefault();
     if (busy) return;
@@ -79,6 +81,7 @@ function entryForm(renew = false) {
       await api('/api/enter', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: event.target.elements.code.value }) });
       groupName = (await api('/api/session')).group?.name || '';
       authenticated = true;
+      invitedCode = '';
       busy = false;
       navigate(shot ? '/preview' : '/camera', true);
     } catch (error) { message(error.message); }
@@ -231,6 +234,14 @@ async function gallery(version, mine) {
 function render() {
   const version = ++renderVersion;
   stopCamera();
+  const invitationUrl = new URL(location.href);
+  if (['/', '/enter'].includes(invitationUrl.pathname) && invitationUrl.searchParams.has('inv')) {
+    const code = invitationUrl.searchParams.get('inv');
+    invitedCode = code.length <= 256 ? code : '';
+    invitationUrl.searchParams.delete('inv');
+    invitationUrl.pathname = '/enter';
+    history.replaceState({}, '', invitationUrl.pathname + invitationUrl.search + invitationUrl.hash);
+  }
   const path = location.pathname;
   if (path === '/') {
     shell(`<section class="entry"><h1 class="wordmark">PHOTOWN</h1><p class="intro">Un diario fotográfico compartido.</p><button class="primary" id="enter">Entrar</button><a class="secondary-link" href="/admin" data-route="/admin">Administración</a></section>`);

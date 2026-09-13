@@ -1,5 +1,5 @@
 import { digest, HttpError, boundedBody, requireSameOrigin } from './security.js';
-import { cookieValue, cookieHeader, randomToken, signToken, verifyToken } from './tokens.js';
+import { cookieValue, cookieHeader, randomToken, invitationCode, signToken, verifyToken } from './tokens.js';
 import { googleStart, googleCallback, googleReady, adminIdentity } from './google-auth.js';
 import { sanitizeWebP } from './webp.js';
 
@@ -38,7 +38,9 @@ async function enter(request, env, db) {
   if (typeof body?.code !== 'string' || body.code.length > 256) throw new HttpError(400, 'Introduce un código de invitación.');
   // Bootstrap only once. Rotating this group's invitation never restores the old code.
   await db.prepare('INSERT OR IGNORE INTO groups (id,name,invite_hash,created_at) VALUES (?,?,?,?)').bind('default', 'PhoTown', await digest(env.INVITE_CODE), now()).run();
-  const group = await db.prepare('SELECT id FROM groups WHERE invite_hash=? AND active=1').bind(await digest(body.code.trim())).first();
+  const submitted = body.code.trim();
+  const normalized = /^[a-z2-9]{8}$/i.test(submitted) ? submitted.toUpperCase() : submitted;
+  const group = await db.prepare('SELECT id FROM groups WHERE invite_hash=? AND active=1').bind(await digest(normalized)).first();
   if (!group) throw new HttpError(401, 'El código no es correcto o el grupo está cerrado.');
   let publisher = await identity(request, env, db), token;
   if (!publisher) {
@@ -113,7 +115,7 @@ async function adminRoutes(request, env, db, url) {
     if (request.method === 'POST') {
       const body = await bodyJSON(request);
       if (typeof body?.name !== 'string' || !body.name.trim() || body.name.length > 80) throw new HttpError(400, 'Escribe un nombre de grupo de hasta 80 caracteres.');
-      const id = crypto.randomUUID(), code = randomToken().slice(0, 24);
+      const id = crypto.randomUUID(), code = invitationCode();
       await db.prepare('INSERT INTO groups (id,name,invite_hash,created_at) VALUES (?,?,?,?)').bind(id, body.name.trim(), await digest(code), now()).run();
       return json({ id, code }, 201);
     }
@@ -123,7 +125,7 @@ async function adminRoutes(request, env, db, url) {
     const [, group, action] = groupAction;
     if (!(await db.prepare('SELECT id FROM groups WHERE id=?').bind(group).first())) throw new HttpError(404, 'No se encuentra el grupo.');
     if (action === 'invitation' && request.method === 'POST') {
-      const code = randomToken().slice(0, 24);
+      const code = invitationCode();
       await db.prepare('UPDATE groups SET invite_hash=? WHERE id=?').bind(await digest(code), group).run();
       return json({ code });
     }

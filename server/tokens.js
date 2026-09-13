@@ -9,6 +9,18 @@ export function cookieHeader(request, name, value, seconds, sameSite = 'Strict')
 export function randomToken() {
   return [...crypto.getRandomValues(new Uint8Array(32))].map(b => b.toString(16).padStart(2, '0')).join('');
 }
+export function invitationCode() {
+  const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const ceiling = Math.floor(256 / alphabet.length) * alphabet.length;
+  let code = '';
+  while (code.length < 8) {
+    for (const value of crypto.getRandomValues(new Uint8Array(16))) {
+      if (value < ceiling) code += alphabet[value % alphabet.length];
+      if (code.length === 8) break;
+    }
+  }
+  return code;
+}
 export async function signToken(env, claims, audience, seconds) {
   return new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).setIssuer('photown').setAudience(audience).setIssuedAt().setExpirationTime(`${seconds}s`).sign(bytes.encode(env.SESSION_SECRET));
 }
