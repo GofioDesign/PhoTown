@@ -1,3 +1,4 @@
 # Local development only. Copy to .dev.vars; replace both values.
 INVITE_CODE=replace-with-a-long-private-invitation-code
 SESSION_SECRET=replace-with-at-least-32-random-characters
+SUPERADMIN_EMAILS=admin@example.com
