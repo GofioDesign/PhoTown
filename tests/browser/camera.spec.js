@@ -126,7 +126,7 @@ test('personal fullscreen supports ALT, original download and scoped permanent d
   await expect(page.locator('.mosaic-tile')).toHaveCount(1);
   await page.locator('.mosaic-tile').click();
   const downloaded = page.waitForEvent('download');
-  await page.getByRole('link', { name: 'Descargar fotografía', exact: true }).click();
+  await page.locator('.photo-viewer').getByRole('link', { name: 'Descargar fotografía', exact: true }).click();
   const file = await downloaded; expect(file.suggestedFilename()).toMatch(/^photown-.*\.webp$/); expect(await file.failure()).toBeNull();
   await page.getByRole('button', { name: 'ALT', exact: true }).click();
   await page.getByLabel('Descripción de la imagen', { exact: true }).fill('Una imagen de prueba en blanco y negro.');
@@ -254,7 +254,7 @@ test('multiple groups, personal archive, alias, ALT, handedness and retry preser
   await post(`/api/library/${firstPhotos[0].id}/description`, {description:'Luz de una ventana.'});
   await page.reload(); await expect(page.locator('.mosaic-tile')).toHaveCount(1);
   expect((await new AxeBuilder({ page }).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations).toEqual([]);
-  await expect(page.getByText('Mi mirada',{exact:true})).toHaveCount(0);
+  await expect(page.locator('.tile-author').getByText('Mi mirada',{exact:true})).toHaveCount(1);
   const open = page.locator('.mosaic-tile'); await open.click();
   await expect(page.getByRole('dialog',{name:'Fotografía a tamaño completo'})).toBeVisible();
   await expect(page.locator('.viewer-credit')).toHaveText('Mi mirada');
@@ -320,7 +320,7 @@ test('YO long press selects, ZIP preserves originals and partial bulk deletion c
   await expect(page.getByRole('navigation',{name:'Selección de fotografías'})).toBeVisible(); await page.mouse.up();
   await expect(first).toHaveAttribute('aria-pressed','true');
   await second.click(); await expect(second).toHaveAttribute('aria-pressed','true');
-  await expect(page.locator('.selection-nav [role=status]')).toHaveText('2 seleccionadas');
+  await expect(page.locator('.selection-nav [role=status]')).toHaveText('2');
   expect((await new AxeBuilder({ page }).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations).toEqual([]);
   await expect(page.locator('.bottom-nav')).toHaveCount(0);
   const download = page.waitForEvent('download'); await page.getByRole('button',{name:'Descargar seleccionadas'}).click();
@@ -337,7 +337,7 @@ test('YO long press selects, ZIP preserves originals and partial bulk deletion c
   await page.getByRole('button',{name:'Eliminar',exact:true}).click();
   await page.getByRole('button',{name:'Eliminar definitivamente'}).click();
   await expect(page.locator('.mosaic-tile')).toHaveCount(5);
-  await expect(page.locator('.selection-nav [role=status]')).toHaveText('1 seleccionadas');
+  await expect(page.locator('.selection-nav [role=status]')).toHaveText('1');
   await page.getByRole('button',{name:'Eliminar',exact:true}).click(); await page.getByRole('button',{name:'Eliminar definitivamente'}).click();
   await expect(page.locator('.mosaic-tile')).toHaveCount(4); await expect(page.locator('.bottom-nav')).toBeVisible();
   await page.getByRole('button',{name:'Personalización'}).click(); await page.getByRole('button',{name:'Seleccionar varias fotos'}).click();
@@ -368,4 +368,59 @@ test('waitlist handles validation, failure and persistence without granting acce
   const row = page.locator('.waitlist-table article').filter({hasText:email}); await expect(row).toBeVisible();
   await row.getByRole('button',{name:'Eliminar solicitud',exact:true}).click(); await page.getByRole('button',{name:'Eliminar solicitud definitivamente'}).click();
   await expect(row).toHaveCount(0);
+});
+
+test('YO profile photo, direct card controls and administrator classroom wall', async ({ page, context }, testInfo) => {
+  await enter(page); await page.getByRole('button',{name:'Fotografiar',exact:true}).click();
+  await page.getByRole('button',{name:'Enviar',exact:true}).click(); await expect(page).toHaveURL(/\/wall$/);
+  await expect(page.locator('#group-menu')).toHaveCount(0);
+  await page.getByRole('link',{name:'YO',exact:true}).click();
+  await page.getByRole('button',{name:'Editar mi perfil'}).click();
+  await page.getByLabel('Mi alias (opcional)').fill('Mirada de prueba');
+  await page.getByLabel('Foto identificativa (opcional)').setInputFiles('public/icon-192.png');
+  await page.getByRole('button',{name:'Guardar perfil'}).click();
+  await expect(page.getByRole('dialog',{name:'Editar mi perfil'})).toHaveCount(0);
+  await expect(page.locator('.profile-avatar img')).toBeVisible();
+  await page.locator('.profile-avatar img').evaluate(img => img.decode());
+  expect((await (await page.request.get('/api/session')).json()).has_avatar).toBe(true);
+  await expect(page.locator('.tile-author')).toHaveCount(0);
+  await page.getByRole('button',{name:'Editar descripción ALT'}).click();
+  await page.getByLabel('Descripción de la imagen',{exact:true}).fill('Imagen para una clase.');
+  await page.getByRole('button',{name:'Guardar descripción'}).click(); await expect(page.getByText('Descripción guardada.')).toBeVisible();
+  await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+  await page.getByRole('checkbox',{name:'Seleccionar fotografía'}).check();
+  for (const width of [280,320,390]) {
+    await page.setViewportSize({width,height:640});
+    for (const button of await page.locator('.selection-nav button').all()) {
+      const box = await button.boundingBox(); expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x+box.width).toBeLessThanOrEqual(width); expect(box.y+box.height).toBeLessThanOrEqual(640);
+    }
+  }
+  await page.screenshot({path:testInfo.outputPath('compact-selection.png')});
+  await page.getByRole('button',{name:'Cancelar selección'}).click();
+  const secret = /^SESSION_SECRET=(.+)$/m.exec(readFileSync('.dev.vars','utf8'))[1].trim();
+  const token = await signToken({SESSION_SECRET:secret},{sub:'local-class-'+crypto.randomUUID(),email:'gofiodesign@gmail.com'},'admin',600);
+  await context.addCookies([{name:'photown_admin',value:token,domain:'localhost',path:'/',httpOnly:true,sameSite:'Strict'}]);
+  const photo = (await (await page.request.get('/api/library')).json()).photos[0];
+  await page.request.post(`/api/admin/photos/${photo.id}/approve`,{headers:{Origin:'http://localhost:8787'}});
+  await page.goto('/wall');
+  await expect(page.locator(`.photo-frame:has([data-id="${photo.id}"]) .tile-author`)).toHaveText('Mirada de prueba');
+  await page.locator(`.photo-frame:has([data-id="${photo.id}"]) .tile-author img`).evaluate(img => img.decode());
+  await page.locator(`.photo-frame:has([data-id="${photo.id}"])`).getByRole('button',{name:'Ver descripción ALT'}).click();
+  await expect(page.locator('.description-text')).toHaveText('Imagen para una clase.');
+  await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+  await context.clearCookies({name:'photown_publisher'}); await context.clearCookies({name:'photown_group'});
+  await page.goto('/admin');
+  await page.locator('.admin-row').filter({has:page.getByRole('heading',{name:'PhoTown',exact:true})}).getByRole('link',{name:'Muro',exact:true}).click();
+  await page.setViewportSize({width:1440,height:900});
+  await expect(page.locator('#class-name')).toHaveText('PhoTown');
+  await expect(page.locator('.bottom-nav')).toHaveCount(0);
+  await expect(page.locator(`[data-id="${photo.id}"]`)).toBeVisible();
+  await page.locator('.mosaic-tile img').evaluateAll(images => Promise.all(images.map(img => img.decode())));
+  await page.screenshot({path:testInfo.outputPath('classroom-wall.png'),fullPage:true});
+  await page.locator(`[data-id="${photo.id}"]`).click();
+  await expect(page.locator('.photo-viewer')).toBeVisible();
+  expect((await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations).toEqual([]);
+  await page.locator('.viewer-image').evaluate(img => img.decode());
+  await page.screenshot({path:testInfo.outputPath('classroom-fullscreen.png')});
+  await page.keyboard.press('Escape'); await expect(page.locator(`[data-id="${photo.id}"]`)).toBeFocused();
 });

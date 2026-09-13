@@ -65,7 +65,7 @@ async function listPhotos(db, where, bindings, url, library = false) {
     if (!Array.isArray(pair) || pair.length !== 2 || !pair.every(v => typeof v === 'string' && v.length < 100)) throw new HttpError(400, 'La página solicitada no es válida.');
     clause += ' AND (created_at < ? OR (created_at = ? AND id < ?))'; args.push(pair[0], pair[0], pair[1]);
   }
-  const result = await db.prepare(`SELECT id,description,status,week,created_at,publisher_id,${library ? 'group_id,(SELECT name FROM groups WHERE groups.id=photos.group_id) AS group_name,' : ''}(SELECT alias FROM memberships WHERE memberships.publisher_id=photos.publisher_id AND memberships.group_id=photos.group_id) AS alias FROM photos WHERE ${clause} ORDER BY created_at DESC,id DESC LIMIT 25`).bind(...args).all();
+  const result = await db.prepare(`SELECT id,description,status,week,created_at,publisher_id,${library ? 'group_id,(SELECT name FROM groups WHERE groups.id=photos.group_id) AS group_name,' : ''}(EXISTS(SELECT 1 FROM profile_avatars a WHERE a.publisher_id=photos.publisher_id AND a.group_id=photos.group_id)) AS has_avatar,(SELECT alias FROM memberships WHERE memberships.publisher_id=photos.publisher_id AND memberships.group_id=photos.group_id) AS alias FROM photos WHERE ${clause} ORDER BY created_at DESC,id DESC LIMIT 25`).bind(...args).all();
   const more = result.results.length > 24, photos = result.results.slice(0, 24), last = photos.at(-1);
   return { photos, next: more ? btoa(JSON.stringify([last.created_at, last.id])) : null };
 }
@@ -137,7 +137,7 @@ async function adminRoutes(request, env, db, url) {
       return json({ id, code }, 201);
     }
   }
-  const groupAction = /^\/api\/admin\/groups\/([a-z0-9-]+)\/(invitation|active|photos|publishers)$/.exec(url.pathname);
+  const groupAction = /^\/api\/admin\/groups\/([a-z0-9-]+)\/(invitation|active|photos|publishers|wall)$/.exec(url.pathname);
   if (groupAction) {
     const [, group, action] = groupAction;
     if (!(await db.prepare('SELECT id FROM groups WHERE id=?').bind(group).first())) throw new HttpError(404, 'No se encuentra el grupo.');
@@ -150,6 +150,11 @@ async function adminRoutes(request, env, db, url) {
       const body = await bodyJSON(request);
       if (typeof body?.active !== 'boolean') throw new HttpError(400, 'Estado de grupo no válido.');
       await db.prepare('UPDATE groups SET active=? WHERE id=?').bind(Number(body.active), group).run(); return json({ ok: true });
+    }
+    if (action === 'wall' && request.method === 'GET') {
+      const page = await listPhotos(db, "group_id=? AND status='published'", [group], url);
+      page.photos.forEach(photo => { delete photo.publisher_id; });
+      return json({ ...page, group: await db.prepare('SELECT id,name FROM groups WHERE id=?').bind(group).first() });
     }
     if (action === 'photos' && request.method === 'GET') return json(await listPhotos(db, "group_id=? AND status IN ('pending','published','hidden')", [group], url));
     if (action === 'publishers' && request.method === 'GET') return json({ publishers: (await db.prepare('SELECT m.publisher_id,m.status,p.created_at,p.last_seen FROM memberships m JOIN publishers p ON p.id=m.publisher_id WHERE m.group_id=? ORDER BY p.created_at LIMIT 200').bind(group).all()).results });
@@ -208,7 +213,16 @@ export async function communityRoute(request, env) {
     return json({ saved: true });
   }
   const user = await participant(request, env, db);
-  if (path === '/api/session' && request.method === 'GET') return json({ authenticated: Boolean(user), group: user ? { id: user.group_id, name: user.name } : null, status: user?.status, identity: user?.publisher_id, alias: user?.alias });
+  if (path === '/api/session' && request.method === 'GET') return json({ authenticated: Boolean(user), group: user ? { id: user.group_id, name: user.name } : null, status: user?.status, identity: user?.publisher_id, alias: user?.alias, has_avatar: user ? Boolean(await db.prepare('SELECT 1 FROM profile_avatars WHERE publisher_id=? AND group_id=?').bind(user.publisher_id, user.group_id).first()) : false });
+  const avatarMatch = /^\/api\/photo-avatar\/([a-f0-9-]+)$/.exec(path);
+  if (avatarMatch && request.method === 'GET') {
+    const photo = await db.prepare("SELECT * FROM photos WHERE id=? AND status IN ('pending','published','hidden')").bind(avatarMatch[1]).first();
+    const allowed = photo && ((user && (photo.publisher_id === user.publisher_id || (photo.group_id === user.group_id && photo.status === 'published'))) || await adminIdentity(request, env));
+    if (!allowed) throw new HttpError(404, 'No se encuentra la imagen de perfil.');
+    const avatar = await db.prepare('SELECT image FROM profile_avatars WHERE publisher_id=? AND group_id=?').bind(photo.publisher_id, photo.group_id).first();
+    if (!avatar) throw new HttpError(404, 'No hay imagen de perfil.');
+    return new Response(new Uint8Array(avatar.image), { headers: { 'Content-Type': 'image/webp' } });
+  }
   const imageMatch = /^\/api\/images\/([a-f0-9-]+)$/.exec(path);
   if (imageMatch && request.method === 'GET') {
     const photo = await db.prepare("SELECT * FROM photos WHERE id=? AND status IN ('pending','published','hidden')").bind(imageMatch[1]).first();
@@ -219,12 +233,38 @@ export async function communityRoute(request, env) {
     return new Response(object.body, { headers: { 'Content-Type': 'image/webp', 'Cache-Control': 'private, no-store' } });
   }
   if (!path.startsWith('/api/')) {
-    if (path === '/admin') return env.ASSETS.fetch(new Request(new URL('/index.html', url), request));
+    if (path === '/admin' || path === '/admin/wall') return env.ASSETS.fetch(new Request(new URL('/index.html', url), request));
     if (!user) return new Response(null, { status: 302, headers: { Location: '/enter' } });
     return env.ASSETS.fetch(new Request(new URL('/index.html', url), request));
   }
   if (!user) throw new HttpError(401, 'Tu acceso ha caducado. Introduce de nuevo tu invitación.');
-  if (path === '/api/groups' && request.method === 'GET') return json({ groups: (await db.prepare('SELECT g.id,g.name,m.status FROM memberships m JOIN groups g ON g.id=m.group_id WHERE m.publisher_id=? AND g.active=1 ORDER BY g.name,g.id').bind(user.publisher_id).all()).results });
+  if (path === '/api/profile/avatar') {
+    if (request.method === 'GET') {
+      const avatar = await db.prepare('SELECT image FROM profile_avatars WHERE publisher_id=? AND group_id=?').bind(user.publisher_id, user.group_id).first();
+      if (!avatar) throw new HttpError(404, 'No hay imagen de perfil.');
+      return new Response(new Uint8Array(avatar.image), { headers: { 'Content-Type': 'image/webp' } });
+    }
+    if (['PUT','DELETE'].includes(request.method)) {
+      await rate(env.UPLOAD_LIMITER, user.publisher_id);
+      if (request.method === 'DELETE') await db.prepare('DELETE FROM profile_avatars WHERE publisher_id=? AND group_id=?').bind(user.publisher_id, user.group_id).run();
+      else {
+        if (request.headers.get('Content-Type') !== 'image/webp') throw new HttpError(415, 'Formato de imagen no válido.');
+        const avatar = sanitizeWebP(await boundedBody(request, 131072));
+        if (avatar.width > 512 || avatar.height > 512) throw new HttpError(400, 'La imagen de perfil debe tener como máximo 512 píxeles de lado.');
+        await db.prepare('INSERT INTO profile_avatars (publisher_id,group_id,image) VALUES (?,?,?) ON CONFLICT(publisher_id,group_id) DO UPDATE SET image=excluded.image').bind(user.publisher_id, user.group_id, [...avatar.bytes]).run();
+      }
+      return json({ ok: true });
+    }
+  }
+  const cover = /^\/api\/groups\/([a-z0-9-]+)\/cover$/.exec(path);
+  if (cover && request.method === 'GET') {
+    const member = await db.prepare('SELECT 1 FROM memberships m JOIN groups g ON g.id=m.group_id WHERE m.publisher_id=? AND g.id=? AND g.active=1').bind(user.publisher_id, cover[1]).first();
+    const photo = member && await db.prepare("SELECT image_key FROM photos WHERE group_id=? AND status='published' ORDER BY created_at DESC,id DESC LIMIT 1").bind(cover[1]).first();
+    const object = photo && await env.PHOTOS.get(photo.image_key);
+    if (!object) throw new HttpError(404, 'No hay portada disponible.');
+    return new Response(object.body, { headers: { 'Content-Type': 'image/webp' } });
+  }
+  if (path === '/api/groups' && request.method === 'GET') return json({ groups: (await db.prepare(`SELECT g.id,g.name,m.status,EXISTS(SELECT 1 FROM photos WHERE photos.group_id=g.id AND photos.status='published') AS has_cover FROM memberships m JOIN groups g ON g.id=m.group_id WHERE m.publisher_id=? AND g.active=1 ORDER BY g.name,g.id`).bind(user.publisher_id).all()).results });
   if (path === '/api/groups/select' && request.method === 'POST') {
     const { group } = await bodyJSON(request);
     const member = await db.prepare('SELECT g.id,g.name FROM memberships m JOIN groups g ON g.id=m.group_id WHERE m.publisher_id=? AND g.id=? AND g.active=1').bind(user.publisher_id, typeof group === 'string' ? group : '').first();

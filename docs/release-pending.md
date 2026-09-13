@@ -1,14 +1,15 @@
-# Sprint 2 — publicado
+# Muro, perfiles y clase — publicado
 
 - Dominio: https://photown.gofiodesign.eu
 - Administración: https://photown.gofiodesign.eu/admin
-- Versión Cloudflare: `5b05e0c5-0e2a-423d-934b-4f3c6c2a1c39`.
-- Fecha: 13 de septiembre de 2026.
-- Migración 0003 de lista de espera aplicada en producción.
-- 22 pruebas de servidor y 11 recorridos de navegador superados. Recursos publicados comprobados por HTTPS y comparados con el código local probado.
+- Versión Cloudflare: `990cecc9-5e45-4283-8a48-0110504364aa`.
+- Migración 0004 de fotos de perfil aplicada en producción.
+- 24 pruebas de servidor y 12 recorridos de navegador superados, incluidos los casos corregidos y repetidos.
 
-Incluye navegación YO — cámara — grupo, muros mosaico, foto y cámara a pantalla completa, ALT editable, alias por grupo, descargas individuales/ZIP, selección múltiple, borrado confirmado, Personalización y preferencia zurdo/diestro. La lista de espera guarda emails en administración y no envía correos, según lo acordado.
+Incluye marcos de fotografías, atribución opcional con alias/avatar, ALT directo, círculos de grupos, iconos YO/grupo, barra reducida con un grupo, perfil editable desde YO y casillas/acciones individuales. La selección múltiple usa solo iconos y número. Los controles de imagen ampliada están abajo.
 
-Las copias de cada grupo se conservan independientes. YO muestra todas las del propietario y cada confirmación identifica los grupos afectados. Se mantienen moderación, privacidad, recuperación administrativa, instalación PWA y reintentos de publicación.
+Administración incluye «Muro» por grupo para clases en escritorio; muestra solo fotos aprobadas y permite ampliación con ALT y atribución sobre el muro. Los avatares siguen los permisos de las fotos y se pueden sustituir o eliminar.
 
-Pendientes fuera de esta entrega: alternancia selfie/trasera, Weekly Review y pruebas físicas/piloto. Alcance y decisiones en [Sprint 2](sprint-2.md); evidencia en [validación](validation.md).
+Los cuatro recursos modificados publicados coinciden por hash con los probados. APIs de perfil y muro de clase rechazan lecturas anónimas con 401. No se utilizaron fotografías reales ni se crearon participantes en la comprobación remota.
+
+Pendientes para otra versión: anotaciones con líneas/círculos, administradores propios por grupo y restricción del superadmin a eliminar/resetear grupos. Se mantienen pendientes pruebas físicas de accesibilidad/cámara y las funciones del roadmap anterior.

@@ -180,3 +180,47 @@ summary { cursor: pointer; min-height: 48px; padding: 14px 0; }
 @media (min-width: 1600px) { .mosaic { columns: 5; } }
 @media (max-height: 450px) { .camera-shell .shutter { width: 60px; height: 60px; min-height: 60px; } .alt-panel { inset-block: 65px 8px; max-height: none; } }
 @media (forced-colors: active) { .mosaic-tile.selected { outline: 3px solid Highlight; } .nav-shutter span { background: ButtonText; } }
+
+/* Framed prints and thumb-reachable controls. */
+.ui-icon { width: 24px; height: 24px; display: block; flex: 0 0 auto; }
+.bottom-nav > a, .bottom-nav > button:not(.nav-shutter) { display: flex; flex-direction: column; gap: 5px; align-items: center; }
+.bottom-nav > a .ui-icon, .bottom-nav > button .ui-icon { width: 28px; height: 28px; }
+.selection-nav { grid-template-columns: 48px minmax(28px,1fr) 48px 48px; gap: 12px; padding-inline: max(16px,env(safe-area-inset-left)); }
+.selection-nav button { display: grid; place-items: center; min-width: 48px; height: 48px; }
+.selection-nav > span { font-size: 1rem; }
+.mosaic { column-gap: 10px; padding: 8px 7px; }
+.photo-frame { position: relative; break-inside: avoid; margin: 0 0 10px; border: 2px solid #eee; background: #000; transform: rotate(-1deg); }
+.photo-frame:nth-child(3n) { transform: rotate(1.3deg); }
+.photo-frame:nth-child(3n+1) { transform: rotate(.5deg); }
+.photo-frame:focus-within { z-index: 2; }
+.photo-frame .mosaic-tile { margin: 0; min-height: 112px; }
+.photo-frame .mosaic-tile.selected::after { display: none; }
+.photo-frame.selected { outline: 2px solid #fff; outline-offset: 2px; }
+.tile-alt { position: absolute; top: 0; right: 0; min-width: 44px; min-height: 44px; padding: 8px; border: 0; background: #000b; font-size: .7rem; font-weight: 700; }
+.tile-author { position: absolute; inset: auto 0 0; min-height: 44px; display: flex; align-items: center; gap: 6px; padding: 8px; background: linear-gradient(transparent,#000d); pointer-events: none; }
+.tile-author img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
+.tile-author span { font-size: .75rem; text-shadow: 0 1px 3px #000; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile-select[type=checkbox] { position: absolute; inset: 0 auto auto 0; width: 44px; height: 44px; min-height: 44px; margin: 0; accent-color: #eee; cursor: pointer; border-radius: 0; }
+.tile-actions { position: absolute; inset: auto 0 0; display: flex; justify-content: flex-end; background: linear-gradient(transparent,#000d); }
+.tile-actions a, .tile-actions button { display: grid; place-items: center; width: 44px; height: 44px; min-height: 44px; padding: 10px; border: 0; color: #fff; }
+.tile-actions .ui-icon { width: 20px; height: 20px; }
+.wall-shell:has(.selection-nav) .tile-actions, .wall-shell:has(.selection-nav) .tile-alt { visibility: hidden; }
+#group-circles { display: flex; flex-wrap: nowrap; gap: 12px; overflow-x: auto; width: 100%; padding: 12px 16px; }
+#group-circles button { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 0 0 72px; min-width: 0; max-width: 88px; border: 0; padding: 0 2px; font-size: .7rem; }
+.group-circle { border: 1px solid #777; border-radius: 50%; width: 52px; height: 52px; overflow: hidden; display: grid; place-items: center; }
+.group-circle img { width: 100%; height: 100%; object-fit: cover; }
+#group-circles [aria-pressed=true] .group-circle { outline: 2px solid #fff; outline-offset: 3px; }
+.my-profile { padding: 12px 18px; }
+.my-profile button { border: 0; padding: 0; display: flex; align-items: center; gap: 14px; }
+.profile-avatar { width: 56px; height: 56px; border-radius: 50%; border: 1px solid #777; display: grid; place-items: center; overflow: hidden; }
+.profile-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.viewer-top { inset: auto 0 0 auto; width: auto; gap: 8px; padding: 12px 12px max(14px,env(safe-area-inset-bottom)); background: transparent; z-index: 2; }
+.viewer-bottom { right: auto; gap: 8px; padding-top: 12px; background: transparent; }
+.viewer-top button, .viewer-bottom button, .viewer-bottom a { width: 48px; height: 48px; padding: 10px; display: grid; place-items: center; }
+.viewer-credit { right: auto; left: 16px; bottom: calc(78px + env(safe-area-inset-bottom)); }
+.wall-header #class-name { flex: 1; margin-inline: 24px; text-align: center; font-size: .85rem; }
+@media (prefers-reduced-motion: reduce), (forced-colors: active) { .photo-frame { transform: none !important; } }
+
+.viewer-top #alt-toggle { padding: 8px; font-size: .8rem; white-space: nowrap; overflow-wrap: normal; }
+.viewer-credit { display: flex; align-items: center; gap: 8px; }
+.viewer-credit img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }

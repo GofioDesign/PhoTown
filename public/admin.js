@@ -67,7 +67,7 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
     if (!response.groups.length) { list.textContent = 'Todavía no hay grupos. Crea el primero.'; return; }
     for (const group of response.groups) {
       const card = document.createElement('article'); card.className = 'admin-row';
-      card.innerHTML = `<h2>${escape(group.name)}</h2><p>${group.active ? 'Grupo abierto' : 'Grupo cerrado'}</p><button data-action="manage">Gestionar grupo</button><button data-action="invitation">Generar nueva invitación</button><button data-action="active">${group.active ? 'Cerrar grupo' : 'Abrir grupo'}</button><div class="invitation-result"></div><p class="group-status" role="status"></p>`;
+      card.innerHTML = `<h2>${escape(group.name)}</h2><p>${group.active ? 'Grupo abierto' : 'Grupo cerrado'}</p><a class="button" href="/admin/wall?group=${encodeURIComponent(group.id)}">Muro</a><button data-action="manage">Gestionar grupo</button><button data-action="invitation">Generar nueva invitación</button><button data-action="active">${group.active ? 'Cerrar grupo' : 'Abrir grupo'}</button><div class="invitation-result"></div><p class="group-status" role="status"></p>`;
       card.querySelector('[data-action=manage]').onclick = () => details(group);
       card.querySelector('[data-action=invitation]').onclick = async event => {
         event.target.disabled = true;

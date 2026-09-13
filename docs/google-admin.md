@@ -59,3 +59,11 @@ Instalar en pantalla de inicio puede abrir un contexto con identidad distinta: e
 ## Lista de espera
 
 El botón «Lista de espera» de administración muestra emails y fecha de solicitud, con paginación de 50 filas. Permite eliminar una solicitud tras confirmación. Los datos no se exponen a participantes ni al público. Guardarlos no crea una identidad ni permite entrar a grupos; no se envían notificaciones. Revisar periódicamente las solicitudes y eliminar las que ya no sean necesarias. La migración 0003 añade únicamente esta tabla e índice.
+
+## Muro de clase y foto identificativa
+
+Cada grupo de administración tiene «Muro»: `/admin/wall?group=ID`, protegido por la sesión Google. Utiliza la misma presentación de marcos, alias, avatar y ALT del móvil, con más columnas en escritorio. Solo muestra publicaciones aprobadas; las pendientes/ocultas siguen en moderación. Abrir/cerrar una imagen restaura el foco sobre el muro.
+
+En YO, «Editar mi perfil» permite alias y foto por grupo. La foto opcional puede proceder de un JPG/PNG/WebP del dispositivo; se recorta al centro a 256×256 en BN. El servidor valida WebP, limita a 128 KiB y 512×512, retira metadatos y guarda el avatar en una tabla privada D1. Reemplazarlo sobrescribe la imagen; eliminarlo borra la fila. La lectura de avatar por fotografía tiene los mismos permisos de visibilidad que la foto. La reasignación administrativa de fotos conserva el perfil del destino.
+
+Las portadas circulares de grupos usan su última publicación aprobada, solo para miembros autorizados. No se añaden nuevas suscripciones ni acceso por pulsar una portada.

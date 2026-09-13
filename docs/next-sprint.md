@@ -24,3 +24,8 @@ El rediseño YO — cámara — grupo activo del Sprint 2 se describe en [sprint
 ## Más adelante
 
 Ayuda opcional de exposición: señalar zonas de altas luces y sombras recortadas, con indicador que no dependa exclusivamente del rojo. Definir umbrales y comprobar utilidad real antes de desarrollarlo.
+
+## Evolución solicitada tras el rediseño del muro
+
+- Herramientas de análisis en el muro de clase: dibujar líneas rectas, curvas/círculos sobre la imagen ampliada; definir borrar/deshacer y si las anotaciones se conservan. Mantener intacta la fotografía original.
+- Administradores propios por grupo. Superadmin restringido a eliminar o resetear grupos; definir exactamente qué conserva o elimina un reseteo antes de implementar operaciones irreversibles. Este cambio de roles no está activo todavía: los administradores actuales conservan sus permisos.

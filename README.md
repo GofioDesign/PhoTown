@@ -12,9 +12,13 @@ La invitación visible lleva al muro del grupo. La navegación fija **YO — cá
 
 **YO** reúne todas las copias de la identidad actual, incluso las de otros grupos. Una foto se abre a pantalla completa: ALT para crear/editar descripción, descarga del WebP original disponible y eliminación confirmada. Pulsar prolongadamente activa selección múltiple; también se puede entrar desde Personalización o con Mayús+Espacio. Las descargas múltiples generan un ZIP (hasta 50 fotos y 100 MB por operación); los borrados parciales permiten reintentar las pendientes.
 
-Se mantienen **copias independientes por grupo**, decisión confirmada para este sprint. La confirmación identifica sus grupos; eliminar una copia no elimina automáticamente otras. La descripción y el alias por grupo continúan separados. El alias solo se muestra en la foto ampliada, nunca como pie permanente del mosaico, y no se sustituye por identificadores.
+Se mantienen **copias independientes por grupo**, decisión confirmada para este sprint. La confirmación identifica sus grupos; eliminar una copia no elimina automáticamente otras. La descripción y el alias por grupo continúan separados. El alias y la foto de perfil opcionales se muestran sobre la imagen del grupo y en su ampliación. En YO no se repite el autor en cada foto.
 
 La cámara BN y la captura ocupan el viewport sin navegación inferior ni scroll. El disparador está sobre el visor. Las acciones de publicación se superponen a la fotografía: un solo grupo no requiere escoger destino; varios grupos permiten elegir uno o más. El envío vuelve al muro. Las capturas pendientes siguen en memoria y los reintentos conservan identificadores y destinos confirmados.
+
+YO permite editar alias y foto identificativa por grupo. Los grupos aparecen como círculos con portada aprobada cuando hay varios; con uno solo, su muro muestra únicamente YO y shutter abajo. Las fotos tienen marcos y ALT directo; YO añade casilla de selección y acciones de descarga/eliminación. La barra múltiple usa iconos y contador compacto.
+
+Administración incluye un enlace «Muro» en cada grupo para usarlo en clases de escritorio. Muestra solo fotos aprobadas y permite ampliarlas sobre el muro sin sesión de participante.
 
 Personalización reúne añadir grupo, alias, zurdo/diestro, instalación PWA y la identidad necesaria para recuperación administrativa. Google sigue reservado a administradores. Moderación, bloqueo, privacidad R2 y reasignación de identidad permanecen activos.
 

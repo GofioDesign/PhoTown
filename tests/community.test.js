@@ -12,9 +12,10 @@ function env() {
   const sqlite = new DatabaseSync(':memory:'); sqlite.exec(readFileSync(new URL('../db/migrations/0001_groups.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../db/migrations/0002_participant_alias.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../db/migrations/0003_waitlist.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../db/migrations/0004_profile_avatars.sql', import.meta.url), 'utf8'));
   const db = { withSession() { return this; }, prepare(sql) {
     let args = [];
-    return { bind(...values) { args = values; return this; },
+    return { bind(...values) { args = values.map(value => Array.isArray(value) ? new Uint8Array(value) : value); return this; },
       async first() { return sqlite.prepare(sql).get(...args) ?? null; },
       async all() { return { results: sqlite.prepare(sql).all(...args) }; },
       async run() { const result = sqlite.prepare(sql).run(...args); return { meta: { changes: Number(result.changes) } }; }
@@ -44,6 +45,36 @@ function image() {
   const b = new Uint8Array(30); b.set(Buffer.from('RIFF')); new DataView(b.buffer).setUint32(4,22,true); b.set(Buffer.from('WEBPVP8 '),8); new DataView(b.buffer).setUint32(16,10,true); b.set([0,0,0,0x9d,1,0x2a,16,0,16,0],20); return b;
 }
 const upload = (e, cookies, id = crypto.randomUUID()) => call(e, '/api/photos', 'POST', cookies, image(), { 'Content-Type': 'image/webp', 'Idempotency-Key': id });
+
+test('profile avatars follow photo visibility, group boundaries and explicit removal', async () => {
+  const e = env(), a = await join(e), b = await join(e), admin = await adminCookie(e), id = crypto.randomUUID();
+  await upload(e, a, id);
+  const saved = await call(e, '/api/profile/avatar', 'PUT', a, image(), { 'Content-Type': 'image/webp' });
+  assert.equal(saved.status, 200);
+  assert.equal((await (await call(e, '/api/session', 'GET', a)).json()).has_avatar, true);
+  assert.deepEqual(new Uint8Array(await (await call(e, '/api/profile/avatar', 'GET', a)).arrayBuffer()), image());
+  assert.equal((await call(e, '/api/profile/avatar', 'GET', b)).status, 404);
+  assert.equal((await call(e, `/api/photo-avatar/${id}`, 'GET', b)).status, 404);
+  await call(e, `/api/admin/photos/${id}/approve`, 'POST', admin);
+  assert.equal((await call(e, `/api/photo-avatar/${id}`, 'GET', b)).status, 200);
+  assert.equal((await call(e, '/api/groups/default/cover', 'GET', b)).status, 200);
+  const group = await (await call(e, '/api/admin/groups', 'POST', admin, { name: 'Other' })).json(), outsider = await join(e, group.code);
+  assert.equal((await call(e, `/api/photo-avatar/${id}`, 'GET', outsider)).status, 404);
+  assert.equal((await call(e, '/api/groups/default/cover', 'GET', outsider)).status, 404);
+  await call(e, '/api/profile/avatar', 'DELETE', a);
+  assert.equal((await call(e, `/api/photo-avatar/${id}`, 'GET', b)).status, 404);
+  assert.equal((await call(e, '/api/profile/avatar', 'PUT', a, image(), { 'Content-Type': 'image/png' })).status, 415);
+});
+
+test('classroom wall requires Google administration and lists only published group photos', async () => {
+  const e = env(), a = await join(e), admin = await adminCookie(e), published = crypto.randomUUID();
+  await upload(e, a, published); await upload(e, a);
+  await call(e, `/api/admin/photos/${published}/approve`, 'POST', admin);
+  assert.equal((await call(e, '/api/admin/groups/default/wall', 'GET', a)).status, 401);
+  const page = await (await call(e, '/api/admin/groups/default/wall', 'GET', admin)).json();
+  assert.equal(page.group.name, 'PhoTown'); assert.deepEqual(page.photos.map(p => p.id), [published]);
+  assert.equal('publisher_id' in page.photos[0], false);
+});
 
 test('personal library spans owned groups without exposing other participants or linking independent copies', async () => {
   const e = env(), a = await join(e), admin = await adminCookie(e);

@@ -13,7 +13,7 @@ async function route(request, env) {
   if (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
     throw new HttpError(403, 'Abre PhoTown mediante HTTPS.');
   }
-  if (env.DB && (url.pathname.startsWith('/api/') || ['/camera','/preview','/my-photos','/wall','/admin','/settings'].includes(url.pathname))) {
+  if (env.DB && (url.pathname.startsWith('/api/') || ['/camera','/preview','/my-photos','/wall','/admin','/admin/wall','/settings'].includes(url.pathname))) {
     requireConfiguration(env);
     return communityRoute(request, env);
   }

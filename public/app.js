@@ -270,6 +270,7 @@ function render() {
     shell(`<section class="entry"><h1 class="wordmark">PHOTOWN</h1><p class="intro">Un diario fotográfico compartido.</p><button class="primary" id="enter">Entrar</button><button type="button" data-install>Instalar app</button><a class="secondary-link" href="/admin" data-route="/admin">Administración</a></section>`);
     document.querySelector('#enter').addEventListener('click', () => navigate(authenticated ? '/wall' : '/enter'));
   } else if (path === '/enter') entryForm(Boolean(shot));
+  else if (path === '/admin/wall') ui.gallery(version, false, new URLSearchParams(location.search).get('group') || 'invalid');
   else if (path === '/admin') renderAdmin({ root, api, shell, current: () => version === renderVersion, confirmDeletion });
   else if (['/camera','/preview','/my-photos','/wall','/settings'].includes(path)) {
     if (!authenticated) { navigate('/enter', true); return; }

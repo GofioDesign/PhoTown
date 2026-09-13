@@ -39,3 +39,11 @@ Implementación del documento entregado el 13 de septiembre de 2026, con dos dec
 - Pantalla completa del navegador cuando está disponible; viewport completo y PWA standalone como base compatible.
 - Pruebas con cámara sintética y viewport móvil no sustituyen dispositivos físicos, VoiceOver/TalkBack ni un piloto con personas con distintas necesidades.
 - Cambio selfie/trasera, Weekly Review y alertas de exposición no forman parte de este documento de Sprint 2; siguen en planificación.
+
+## Revisión visual posterior, según las referencias del usuario
+
+Esta revisión sustituye la indicación anterior de ocultar permanentemente el autor en el mosaico de grupo. Las fotos del grupo ahora llevan marco, alias/avatar opcionales y ALT directo. YO mantiene las mismas imágenes con acciones y casilla, sin identificación repetida del autor. El perfil por grupo se edita desde YO.
+
+Con varias membresías, se muestran círculos superiores con portadas aprobadas y nombre; con una sola, el muro de grupo omite su botón inferior. YO y grupo usan iconos. La selección múltiple muestra iconos y número, con nombres accesibles; cerrar/ALT se sitúan abajo en la foto ampliada.
+
+Administración añade el muro de clase por grupo, con publicaciones aprobadas y ampliación sobre el muro. Herramientas de dibujo y administradores propios por grupo quedan pendientes para una versión posterior, junto con la restricción futura del superadmin a eliminar/resetear grupos.

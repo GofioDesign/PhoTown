@@ -67,3 +67,13 @@ Referencias: [MDN: aplicaciones instalables](https://developer.mozilla.org/en-US
 - HTTPS del dominio personalizado: entrada, módulos JS, CSS y manifiesto responden 200. Los cinco recursos modificados coinciden por SHA-256 con los archivos probados. Archivo personal y lista administrativa sin sesión responden 401. Email inválido rechazado con 400 sin registro. Dominio workers.dev sigue sirviendo la versión nueva.
 - No se crearon participantes, fotos ni solicitudes reales para esta comprobación remota. Las pruebas funcionales con datos se realizaron localmente.
 - Pendiente: cámaras e instalación en iPhone/Android físicos, lectores de pantalla y validación con participantes. Cambio selfie/trasera y Weekly Review permanecen para próximos sprints.
+
+## Revisión de muro, perfiles y clase
+
+- 24 pruebas de servidor superadas. Nuevas pruebas de avatar: bytes, visibilidad, aislamiento entre grupos, retirada y rechazo de formato; muro de clase restringido a administradores y publicaciones aprobadas.
+- Los 12 recorridos de navegador superados (los casos modificados se ejecutaron de nuevo). Carga JPG/PNG/WebP convertida a avatar BN, alias en YO, ALT directo, casilla de selección, navegación con un grupo y muro de clase sin identidad de participante.
+- Barra de selección comprobada a 280, 320 y 390 píxeles de ancho. Iconos de 48 px en la barra; ALT sin salto de línea. Pantalla completa y muro de escritorio revisados visualmente con imágenes cargadas.
+- Accesibilidad automatizada conservada en los recorridos anteriores y verificada también en la ampliación del muro de clase.
+- Migración 0004 crea una tabla privada de avatares por membresía. No cambia las fotos ni reasigna identidades.
+
+- Publicado como `990cecc9-5e45-4283-8a48-0110504364aa`. Cuatro recursos modificados verificados por hash sobre HTTPS; nuevo muro y avatar protegidos por sesión.
