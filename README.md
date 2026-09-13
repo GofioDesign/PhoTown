@@ -6,15 +6,17 @@ Dominio de la instalación: https://photown.gofiodesign.eu (acceso mediante invi
 
 La dirección anterior https://photown.photown.workers.dev sigue habilitada durante la transición. Las identidades de participante se guardan por dominio; véase [la guía](docs/google-admin.md).
 
-## Versión actual — Sprint 2
+## Versión actual — transición al núcleo v6
+
+La migración `0005_core_v6.sql` incorpora USER, proveedores OAuth, membresías con PAR-ID, roles y estados separados, configuración de GROUP, PHOTO con origen único y WALL persistente. Conserva las tablas anteriores como puente para migrar el cliente sin perder datos.
 
 La invitación visible lleva al muro del grupo. La navegación fija **YO — cámara — grupo activo** sustituye el menú anterior. Los muros son mosaicos de fotografías que conservan su proporción; la cabecera PHOTOWN y el botón de personalización permanecen fijos. El modo zurdo invierte los laterales y se guarda en el dispositivo.
 
 **YO** reúne todas las copias de la identidad actual, incluso las de otros grupos. Una foto se abre a pantalla completa: ALT para crear/editar descripción, descarga del WebP original disponible y eliminación confirmada. Pulsar prolongadamente activa selección múltiple; también se puede entrar desde Personalización o con Mayús+Espacio. Las descargas múltiples generan un ZIP (hasta 50 fotos y 100 MB por operación); los borrados parciales permiten reintentar las pendientes.
 
-Se mantienen **copias independientes por grupo**, decisión confirmada para este sprint. La confirmación identifica sus grupos; eliminar una copia no elimina automáticamente otras. La descripción y el alias por grupo continúan separados. El alias y la foto de perfil opcionales se muestran sobre la imagen del grupo y en su ampliación. En YO no se repite el autor en cada foto.
+Las copias históricas existentes en distintos grupos se conservan como PHOTO independientes y no se fusionan por hash. Para nuevas capturas, CAMERA fija un único GROUP de origen y ya no permite publicar la misma captura simultáneamente en varios grupos. La descripción y el alias por grupo continúan separados durante la transición.
 
-La cámara BN y la captura ocupan el viewport sin navegación inferior ni scroll. El disparador está sobre el visor. Las acciones de publicación se superponen a la fotografía: un solo grupo no requiere escoger destino; varios grupos permiten elegir uno o más. El envío vuelve al muro. Las capturas pendientes siguen en memoria y los reintentos conservan identificadores y destinos confirmados.
+La cámara BN y la captura ocupan el viewport sin navegación inferior ni scroll. El disparador está sobre el visor. La vista previa muestra el GROUP de origen fijado al capturar. El envío vuelve al muro y los reintentos conservan el mismo identificador y origen.
 
 YO permite editar alias y foto identificativa por grupo. Los grupos aparecen como círculos con portada aprobada cuando hay varios; con uno solo, su muro muestra únicamente YO y shutter abajo. Las fotos tienen marcos y ALT directo; YO añade casilla de selección y acciones de descarga/eliminación. La barra múltiple usa iconos y contador compacto.
 
