@@ -7,6 +7,7 @@ import { signToken } from '../server/tokens.js';
 import { authorizeGoogleClaims } from '../server/google-auth.js';
 import { cleanupDeleted, photoWeek, erasePhoto } from '../server/community.js';
 import { sanitizeWebP } from '../server/webp.js';
+import { ensureAdminPrincipal } from '../server/core-v6.js';
 
 function env() {
   const sqlite = new DatabaseSync(':memory:'); sqlite.exec(readFileSync(new URL('../db/migrations/0001_groups.sql', import.meta.url), 'utf8'));
@@ -24,7 +25,7 @@ function env() {
   }, async batch(statements) { sqlite.exec('BEGIN'); try { const results = []; for (const s of statements) results.push(await s.run()); sqlite.exec('COMMIT'); return results; } catch (e) { sqlite.exec('ROLLBACK'); throw e; } } };
   const objects = new Map();
   return { DB: db, sqlite, objects,
-    INVITE_CODE: 'the-initial-invitation-for-tests', SESSION_SECRET: 'a-long-and-private-secret-for-testing-only', ADMIN_EMAILS: 'admin@example.com',
+    INVITE_CODE: 'the-initial-invitation-for-tests', SESSION_SECRET: 'a-long-and-private-secret-for-testing-only', SUPERADMIN_EMAILS: 'admin@example.com',
     ENTRY_LIMITER: { limit: async () => ({ success: true }) }, UPLOAD_LIMITER: { limit: async () => ({ success: true }) }, ASSETS: { fetch: async () => new Response('asset') },
     PHOTOS: { async put(key, bytes) { if (objects.has(key)) return null; objects.set(key, bytes); return {}; }, async get(key) { return objects.has(key) ? { body: objects.get(key) } : null; }, async delete(key) { objects.delete(key); } }
   };
@@ -41,7 +42,15 @@ async function join(e, code = e.INVITE_CODE, cookies = '') {
   response.headers.getSetCookie().forEach(v => { const [k, value] = v.split(';')[0].split('='); entries.set(k, value); });
   return [...entries].map(([k,v]) => `${k}=${v}`).join('; ');
 }
-const adminCookie = async e => 'photown_admin=' + await signToken(e, { sub: 'google-subject', email: 'admin@example.com' }, 'admin', 3600);
+const adminCookie = async e => {
+  const identity = { sub: 'google-subject', email: 'admin@example.com' };
+  const principal = await ensureAdminPrincipal(e.DB, identity, ['admin@example.com']);
+  for (const group of e.sqlite.prepare('SELECT id FROM groups').all()) {
+    e.sqlite.prepare("INSERT OR IGNORE INTO group_role_assignments (group_id,email,role,assigned_by_user_id,created_at) VALUES (?,?,'admin',?,?)").run(group.id, identity.email, principal.user_id, new Date().toISOString());
+  }
+  await ensureAdminPrincipal(e.DB, identity, ['admin@example.com']);
+  return 'photown_admin=' + await signToken(e, identity, 'admin', 3600);
+};
 function image() {
   const b = new Uint8Array(30); b.set(Buffer.from('RIFF')); new DataView(b.buffer).setUint32(4,22,true); b.set(Buffer.from('WEBPVP8 '),8); new DataView(b.buffer).setUint32(16,10,true); b.set([0,0,0,0x9d,1,0x2a,16,0,16,0],20); return b;
 }
@@ -174,14 +183,15 @@ test('moderation and groups are server-authorized; published images stay within 
   assert.equal((await call(e, `/api/images/${id}`, 'GET', a)).status, 404);
   assert.equal((await upload(e, a)).status, 401);
 });
-test('invitation rotation does not bootstrap the old code again; admin allowlist is checked each request', async () => {
+test('invitation rotation does not restore old codes and global role is independent from group admin', async () => {
   const e = env(); await join(e); const admin = await adminCookie(e);
   const rotated = await (await call(e, '/api/admin/groups/default/invitation', 'POST', admin)).json();
   assert.match(rotated.code, /^[A-HJKMNP-Z2-9]{8}$/);
   assert.equal((await call(e, '/api/enter', 'POST', '', { code: e.INVITE_CODE })).status, 401);
   await join(e, ' ' + rotated.code.toLowerCase() + ' ');
-  e.ADMIN_EMAILS = 'other@example.com';
-  assert.equal((await call(e, '/api/admin/groups', 'GET', admin)).status, 401);
+  e.SUPERADMIN_EMAILS = 'other@example.com';
+  assert.equal((await call(e, '/api/admin/groups', 'GET', admin)).status, 200);
+  assert.equal((await call(e, '/api/admin/groups', 'POST', admin, { name: 'Forbidden' })).status, 403);
 });
 test('failed R2 deletion hides image immediately and scheduled cleanup removes bytes', async () => {
   const e = env(), a = await join(e), id = crypto.randomUUID(); await upload(e, a, id);
