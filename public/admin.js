@@ -12,7 +12,7 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
     shell(`<section class="entry"><a class="brand" href="/" data-route="/">PHOTOWN</a><h1>Administración</h1><p>Gestiona grupos, invitaciones y fotografías.</p>${session.configured ? '<a class="button" href="/api/admin/google/start">Entrar con Google</a>' : '<p role="status">El acceso con Google está pendiente de configuración por el equipo de PhoTown.</p>'}${failed ? '<p role="alert">No se pudo autorizar esta cuenta. Utiliza una cuenta administradora o vuelve a intentar.</p>' : ''}</section>`);
     return;
   }
-  shell(`<section class="gallery-shell"><a class="brand" href="/" data-route="/">PHOTOWN</a><h1>Administración de grupos</h1><p>${escape(session.email)}</p><button id="logout">Cerrar sesión de administración</button><form id="create-group"><label for="group-name">Nombre del nuevo grupo</label><input id="group-name" maxlength="80" required><button class="primary" type="submit">Crear grupo</button></form><p id="admin-message" role="status"></p><div id="new-invitation"></div><div id="groups" class="group-grid"></div><section id="group-detail" aria-label="Contenido del grupo"></section></section>`);
+  shell(`<section class="gallery-shell"><a class="brand" href="/" data-route="/">PHOTOWN</a><h1>Administración de grupos</h1><p>${escape(session.email)}</p><button id="logout">Cerrar sesión de administración</button><form id="create-group"><label for="group-name">Nombre del nuevo grupo</label><input id="group-name" maxlength="80" required><label for="group-admin-email">Correo OAuth del admin inicial</label><input id="group-admin-email" name="admin_email" type="email" maxlength="254" required value="${escape(session.email)}"><button class="primary" type="submit">Crear grupo</button></form><p id="admin-message" role="status"></p><div id="new-invitation"></div><div id="groups" class="group-grid"></div><section id="group-detail" aria-label="Contenido del grupo"></section></section>`);
   const waiting = document.createElement('section');
   waiting.innerHTML = '<button id="show-waitlist" aria-expanded="false" aria-controls="waitlist-admin">Lista de espera</button><div id="waitlist-admin" hidden><h2>Personas en lista de espera</h2><p>Solicitudes guardadas sin envío de correos ni acceso automático.</p><div class="waitlist-table"></div><button id="more-waitlist" hidden>Cargar más solicitudes</button><p role="status"></p></div>';
   root.querySelector('#create-group').before(waiting);
@@ -86,7 +86,7 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
   async function details(group) {
     const version = ++detailVersion;
     const target = root.querySelector('#group-detail');
-    target.innerHTML = `<h2 tabindex="-1">${escape(group.name)}</h2><p class="detail-message" role="status">Cargando…</p><div class="photo-grid"></div><button class="more" hidden>Cargar más fotografías</button><h3>Participantes</h3><div class="members"></div>`;
+    target.innerHTML = `<h2 tabindex="-1">${escape(group.name)}</h2><p class="detail-message" role="status">Cargando…</p><div class="photo-grid"></div><button class="more" hidden>Cargar más fotografías</button><h3>Administración del grupo</h3><form id="assign-admin"><label for="assigned-email">Correo OAuth</label><input id="assigned-email" name="email" type="email" maxlength="254" required><label for="assigned-role">Rol</label><select id="assigned-role" name="role"><option value="admin">Admin</option><option value="moderator">Moderator</option></select><button type="submit">Asignar acceso</button><p role="status"></p></form><div class="group-admins"></div><h3>Participantes</h3><div class="members"></div>`;
     target.querySelector('h2').focus();
     let cursor, loading = false;
     const valid = () => current() && version === detailVersion;
@@ -118,6 +118,29 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
     };
     target.querySelector('.more').onclick = load;
     await load();
+    try {
+      const response = await api(`/api/admin/groups/${group.id}/admins`); if (!valid()) return;
+      const assigned = target.querySelector('.group-admins');
+      const drawAdmins = admins => {
+        assigned.replaceChildren();
+        for (const item of admins) {
+          const row = document.createElement('p');
+          row.textContent = `${item.email} · ${item.role}${item.claimed_user_id ? ' · vinculado' : ' · pendiente de primer acceso'}`;
+          assigned.append(row);
+        }
+        if (!admins.length) assigned.textContent = 'No hay cuentas administrativas asignadas.';
+      };
+      drawAdmins(response.admins);
+      const form = target.querySelector('#assign-admin');
+      form.onsubmit = async event => {
+        event.preventDefault(); const button = form.querySelector('button'); button.disabled = true;
+        try {
+          await post(`/api/admin/groups/${group.id}/admins`, { email: form.elements.email.value, role: form.elements.role.value });
+          const refreshed = await api(`/api/admin/groups/${group.id}/admins`); drawAdmins(refreshed.admins); form.reset(); form.querySelector('[role=status]').textContent = 'Acceso asignado.';
+        } catch (error) { form.querySelector('[role=status]').textContent = error.message; }
+        finally { button.disabled = false; }
+      };
+    } catch (error) { if (valid()) target.querySelector('.group-admins').textContent = error.message; }
     try {
       const response = await api(`/api/admin/groups/${group.id}/publishers`); if (!valid()) return;
       const list = target.querySelector('.members');
@@ -155,7 +178,7 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
   }
   root.querySelector('#create-group').onsubmit = async event => {
     event.preventDefault(); const button = event.target.querySelector('button'); button.disabled = true;
-    try { const result = await post('/api/admin/groups', { name: event.target.querySelector('input').value }); invitation(root.querySelector('#new-invitation'), result.code); event.target.reset(); await groups(); report('Grupo creado.'); }
+    try { const result = await post('/api/admin/groups', { name: event.target.querySelector('#group-name').value, admin_email: event.target.elements.admin_email.value }); invitation(root.querySelector('#new-invitation'), result.code); event.target.reset(); event.target.elements.admin_email.value = session.email; await groups(); report('Grupo creado.'); }
     catch (error) { report(error.message); } finally { button.disabled = false; }
   };
   root.querySelector('#logout').onclick = async () => {
