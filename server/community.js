@@ -6,6 +6,7 @@ import { addPhotoToCurrentWall, createInitialWall, ensureAdminPrincipal, ensureG
 
 const json = (data, status = 200, headers = {}) => Response.json(data, { status, headers });
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const emailPattern = /^[a-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/;
 const now = () => new Date().toISOString();
 async function bodyJSON(request, limit = 4096) {
   try { return JSON.parse(new TextDecoder().decode(await boundedBody(request, limit))); }
@@ -151,23 +152,45 @@ async function adminRoutes(request, env, db, url) {
   }
   if (url.pathname === '/api/admin/logout' && request.method === 'POST') return json({ ok: true }, 200, { 'Set-Cookie': cookieHeader(request, 'photown_admin', '', 0) });
   if (url.pathname === '/api/admin/groups') {
-    if (request.method === 'GET') return json({ groups: (await db.prepare('SELECT id,name,active,created_at FROM groups ORDER BY created_at DESC,id DESC').all()).results });
+    if (request.method === 'GET') {
+      const groups = admin.superadmin
+        ? (await db.prepare('SELECT id,name,active,created_at FROM groups ORDER BY created_at DESC,id DESC').all()).results
+        : (await db.prepare("SELECT g.id,g.name,g.active,g.created_at FROM group_memberships gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=? AND gm.role IN ('admin','moderator') AND gm.state='active' ORDER BY g.created_at DESC,g.id DESC").bind(admin.user_id).all()).results;
+      return json({ groups });
+    }
     if (request.method === 'POST') {
       if (!admin.superadmin) throw new HttpError(403, 'Solo superadmin puede crear grupos.');
       const body = await bodyJSON(request);
       if (typeof body?.name !== 'string' || !body.name.trim() || body.name.length > 80) throw new HttpError(400, 'Escribe un nombre de grupo de hasta 80 caracteres.');
+      const initialAdmin = typeof body?.admin_email === 'string' && body.admin_email.trim() ? body.admin_email.trim().toLowerCase() : admin.email;
+      if (!emailPattern.test(initialAdmin)) throw new HttpError(400, 'Indica el correo OAuth del admin inicial.');
       const id = crypto.randomUUID(), code = invitationCode();
-      await db.prepare('INSERT INTO groups (id,name,invite_hash,created_at) VALUES (?,?,?,?)').bind(id, body.name.trim(), await digest(code), now()).run();
-      await db.prepare("INSERT INTO group_memberships (user_id,group_id,par_id,role,state,trust,joined_at) VALUES (?,?,?,'admin','active',0,?)").bind(admin.user_id, id, crypto.randomUUID(), now()).run();
+      const timestamp = now();
+      await db.prepare('INSERT INTO groups (id,name,invite_hash,created_at) VALUES (?,?,?,?)').bind(id, body.name.trim(), await digest(code), timestamp).run();
+      await db.prepare("INSERT INTO group_role_assignments (group_id,email,role,assigned_by_user_id,claimed_user_id,created_at) VALUES (?,?,'admin',?,?,?)").bind(id, initialAdmin, admin.user_id, initialAdmin === admin.email ? admin.user_id : null, timestamp).run();
+      if (initialAdmin === admin.email) await db.prepare("INSERT INTO group_memberships (user_id,group_id,par_id,role,state,trust,joined_at) VALUES (?,?,?,'admin','active',0,?)").bind(admin.user_id, id, crypto.randomUUID(), timestamp).run();
       await createInitialWall(db, id, body.name.trim());
       return json({ id, code }, 201);
     }
   }
-  const groupAction = /^\/api\/admin\/groups\/([a-z0-9-]+)\/(invitation|active|photos|publishers|wall)$/.exec(url.pathname);
+  const groupAction = /^\/api\/admin\/groups\/([a-z0-9-]+)\/(invitation|active|photos|publishers|wall|admins)$/.exec(url.pathname);
   if (groupAction) {
     const [, group, action] = groupAction;
     if (!(await db.prepare('SELECT id FROM groups WHERE id=?').bind(group).first())) throw new HttpError(404, 'No se encuentra el grupo.');
-    await requireGroupAuthority(db, admin, group, action === 'wall' ? ['admin','moderator'] : ['admin']);
+    if (!(action === 'admins' && admin.superadmin)) await requireGroupAuthority(db, admin, group, action === 'wall' ? ['admin','moderator'] : ['admin']);
+    if (action === 'admins') {
+      if (request.method === 'GET') return json({ admins: (await db.prepare('SELECT email,role,claimed_user_id,created_at FROM group_role_assignments WHERE group_id=? ORDER BY role DESC,email').bind(group).all()).results });
+      if (request.method === 'POST') {
+        const body = await bodyJSON(request);
+        const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+        const role = body?.role === 'moderator' ? 'moderator' : 'admin';
+        if (!emailPattern.test(email)) throw new HttpError(400, 'Indica un correo OAuth válido.');
+        await db.prepare(`INSERT INTO group_role_assignments (group_id,email,role,assigned_by_user_id,created_at)
+          VALUES (?,?,?,?,?) ON CONFLICT(group_id,email) DO UPDATE SET role=excluded.role,assigned_by_user_id=excluded.assigned_by_user_id`)
+          .bind(group, email, role, admin.user_id, now()).run();
+        return json({ email, role });
+      }
+    }
     if (action === 'invitation' && request.method === 'POST') {
       const code = invitationCode();
       await db.prepare('UPDATE groups SET invite_hash=? WHERE id=?').bind(await digest(code), group).run();
@@ -253,7 +276,7 @@ export async function communityRoute(request, env) {
     await rate(env.ENTRY_LIMITER, 'waitlist:' + await digest(request.headers.get('CF-Connecting-IP') || 'local'));
     const body = await bodyJSON(request, 1024);
     const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
-    if (email.length > 254 || !/^[a-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(email)) throw new HttpError(400, 'Introduce un correo electrónico válido.');
+    if (email.length > 254 || !emailPattern.test(email)) throw new HttpError(400, 'Introduce un correo electrónico válido.');
     await db.prepare('INSERT OR IGNORE INTO waitlist (id,email,created_at) VALUES (?,?,?)').bind(crypto.randomUUID(), email, now()).run();
     // Duplicate submissions have the same response; never disclose membership.
     return json({ saved: true });
