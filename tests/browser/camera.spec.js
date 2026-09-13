@@ -116,7 +116,7 @@ test('personal fullscreen supports ALT, original download and scoped permanent d
   await expect(page.getByRole('button', { name: 'Fotografiar', exact: true })).toBeEnabled();
   await page.locator('#capture-area').click();
   await expect(page).toHaveURL(/\/preview$/);
-  await expect(page.locator('.destinations')).toBeHidden();
+  await expect(page.locator('.destination-context')).toContainText('Grupo de origen:');
   await page.getByRole('button', { name: 'Repetir', exact: true }).click();
   const shutter = page.getByRole('button', { name: 'Fotografiar', exact: true });
   await expect(shutter).toBeEnabled(); await shutter.focus(); await page.keyboard.press('Space');
@@ -214,7 +214,7 @@ test('main screens have no automated WCAG A/AA violations', async ({ page }) => 
   expect((await new AxeBuilder({ page }).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations).toEqual([]);
 });
 
-test('multiple groups, personal archive, alias, ALT, handedness and retry preserve independent copies', async ({ page, context }) => {
+test('multiple groups, personal archive, alias, ALT, handedness and retry preserve one capture origin', async ({ page, context }) => {
   const secret = /^SESSION_SECRET=(.+)$/m.exec(readFileSync('.dev.vars', 'utf8'))[1].trim();
   const token = await signToken({ SESSION_SECRET: secret }, { sub: 'local-test-admin-' + crypto.randomUUID(), email: 'gofiodesign@gmail.com' }, 'admin', 600);
   await context.addCookies([{ name:'photown_admin', value:token, domain:'localhost', path:'/', httpOnly:true, sameSite:'Strict' }]);
@@ -237,10 +237,10 @@ test('multiple groups, personal archive, alias, ALT, handedness and retry preser
   await page.reload(); await expect(page.locator('.bottom-nav > :first-child')).toHaveText(firstName);
   await page.getByRole('button',{name:'Abrir cámara'}).click();
   await page.getByRole('button',{name:'Fotografiar',exact:true}).click();
-  await page.locator(`.destinations input[value="${second.id}"]`).check();
+  await expect(page.locator('.destination-context')).toHaveText(`Grupo de origen: ${firstName}`);
   let lost = false;
   await page.route('**/api/photos', async route => {
-    if (route.request().headers()['x-photown-group'] === second.id && !lost) { lost = true; await route.fetch(); await route.abort('connectionreset'); }
+    if (route.request().headers()['x-photown-group'] === first.id && !lost) { lost = true; await route.fetch(); await route.abort('connectionreset'); }
     else await route.continue();
   });
   await page.getByRole('button',{name:'Enviar',exact:true}).click();
@@ -249,7 +249,7 @@ test('multiple groups, personal archive, alias, ALT, handedness and retry preser
   await expect(page).toHaveURL(/\/wall$/);
   const firstPhotos = (await (await page.request.get(`/api/admin/groups/${first.id}/photos`)).json()).photos;
   const secondPhotos = (await (await page.request.get(`/api/admin/groups/${second.id}/photos`)).json()).photos;
-  expect(firstPhotos).toHaveLength(1); expect(secondPhotos).toHaveLength(1);
+  expect(firstPhotos).toHaveLength(1); expect(secondPhotos).toHaveLength(0);
   await post(`/api/admin/photos/${firstPhotos[0].id}/approve`, {});
   await post(`/api/library/${firstPhotos[0].id}/description`, {description:'Luz de una ventana.'});
   await page.reload(); await expect(page.locator('.mosaic-tile')).toHaveCount(1);
@@ -264,12 +264,11 @@ test('multiple groups, personal archive, alias, ALT, handedness and retry preser
   await page.keyboard.press('Escape'); await expect(open).toBeFocused();
   await page.getByRole('link',{name:'PHOTOWN',exact:true}).click();
   await expect(page).toHaveURL(/\/wall$/); await expect(page.locator('#group-menu')).toHaveText(firstName);
-  await page.getByRole('link',{name:'YO',exact:true}).click(); await expect(page.locator('.mosaic-tile')).toHaveCount(2);
+  await page.getByRole('link',{name:'YO',exact:true}).click(); await expect(page.locator('.mosaic-tile')).toHaveCount(1);
   await page.locator(`[data-id="${firstPhotos[0].id}"]`).click();
   await page.getByRole('button', {name:'Eliminar',exact:true}).click();
   await page.getByRole('button', {name:'Eliminar definitivamente'}).click();
-  await expect(page.locator('.mosaic-tile')).toHaveCount(1);
-  expect((await page.request.get(`/api/library/${secondPhotos[0].id}/download`)).status()).toBe(200);
+  await expect(page.locator('.mosaic-tile')).toHaveCount(0);
 });
 
 test('portrait camera controls fit the viewport and installation guidance is available', async ({ page }) => {
