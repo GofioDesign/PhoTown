@@ -1,5 +1,6 @@
 import { HttpError, requireConfiguration, issueSession, readSession, sameSecret, requireSameOrigin, boundedBody, digest } from './security.js';
 import { sanitizeWebP } from './webp.js';
+import { communityRoute, cleanupDeleted } from './community.js';
 
 const json = (data, status = 200, headers = {}) => Response.json(data, { status, headers });
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -11,6 +12,10 @@ async function route(request, env) {
   const url = new URL(request.url);
   if (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
     throw new HttpError(403, 'Abre PhoTown mediante HTTPS.');
+  }
+  if (env.DB && (url.pathname.startsWith('/api/') || ['/camera','/preview','/my-photos','/wall','/admin'].includes(url.pathname))) {
+    requireConfiguration(env);
+    return communityRoute(request, env);
   }
   if (url.pathname.startsWith('/api/')) {
     requireConfiguration(env);
@@ -65,10 +70,11 @@ async function route(request, env) {
     return env.ASSETS.fetch(new Request(new URL('/index.html', url), request));
   }
   // No route serves R2 objects, lists photographs, or exposes configuration.
-  if (['/app.js', '/processing.js', '/styles.css', '/robots.txt'].includes(url.pathname)) return env.ASSETS.fetch(request);
+  if (['/app.js', '/admin.js', '/processing.js', '/styles.css', '/robots.txt'].includes(url.pathname)) return env.ASSETS.fetch(request);
   return new Response('Página no encontrada', { status: 404 });
 }
 export default {
+  async scheduled(event, env, context) { context.waitUntil(cleanupDeleted(env)); },
   async fetch(request, env) {
     let response;
     try { response = await route(request, env); }

@@ -1,4 +1,7 @@
 import { test, expect } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { signToken } from '../../server/tokens.js';
+import AxeBuilder from '@axe-core/playwright';
 
 const code = process.env.PHOTOWN_TEST_CODE;
 test.beforeAll(() => {
@@ -88,7 +91,7 @@ test('session expiry preserves capture through renewed invitation', async ({ pag
   await page.getByRole('button', { name: 'Fotografiar', exact: true }).click();
   await expect(page.locator('#photo')).toBeVisible();
   const imageUrl = await page.locator('#photo').getAttribute('src');
-  await context.clearCookies();
+  await context.clearCookies({ name: 'photown_group' });
   await page.getByRole('button', { name: 'Enviar', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Vuelve a entrar.' })).toBeVisible();
   await page.getByLabel('Código de invitación').fill(code);
@@ -96,4 +99,71 @@ test('session expiry preserves capture through renewed invitation', async ({ pag
   await expect(page.locator('#photo')).toHaveAttribute('src', imageUrl);
   await page.getByRole('button', { name: 'Enviar', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Fotografía guardada.' })).toBeVisible();
+});
+test('visible invitation, whole-viewfinder capture, keyboard controls and permanent own-photo deletion', async ({ page }) => {
+  await page.goto('/enter');
+  await expect(page.getByLabel('Código de invitación')).toHaveAttribute('type', 'text');
+  await page.getByLabel('Código de invitación').fill(code);
+  await page.getByRole('button', { name: 'Entrar en PhoTown' }).click();
+  await expect(page.getByRole('button', { name: 'Fotografiar', exact: true })).toBeEnabled();
+  await page.locator('#capture-area').click();
+  await expect(page).toHaveURL(/\/preview$/);
+  await page.getByRole('button', { name: 'Repetir', exact: true }).click();
+  const shutter = page.getByRole('button', { name: 'Fotografiar', exact: true });
+  await expect(shutter).toBeEnabled(); await shutter.focus(); await page.keyboard.press('Space');
+  await page.getByRole('button', { name: 'Enviar', exact: true }).click();
+  await page.getByRole('link', { name: 'Ver mis fotos' }).click();
+  await expect(page.locator('.photo-card')).toHaveCount(1);
+  await page.getByLabel('Descripción de la imagen (opcional)').fill('Una imagen de prueba en blanco y negro.');
+  await page.getByRole('button', { name: 'Guardar descripción' }).click();
+  await expect(page.getByText('Descripción guardada.')).toBeVisible();
+  await page.getByRole('button', { name: 'Borrar fotografía', exact: true }).click();
+  await expect(page.getByRole('dialog')).toBeVisible(); await page.keyboard.press('Escape');
+  await expect(page.locator('.photo-card')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Borrar fotografía', exact: true }).click();
+  await page.getByRole('button', { name: 'Borrar definitivamente', exact: true }).click();
+  await expect(page.locator('.photo-card')).toHaveCount(0);
+  await expect(page.getByText('Fotografía borrada definitivamente.', { exact: true })).toBeVisible();
+  await page.reload(); await expect(page.getByText('Todavía no has enviado fotografías a este grupo.')).toBeVisible();
+});
+test('admin can create group, rotate invitation, moderate and block participants using actual D1', async ({ page, context }) => {
+  // Local-only fixture. No test-only authentication endpoint is shipped.
+  const secret = /^SESSION_SECRET=(.+)$/m.exec(readFileSync('.dev.vars', 'utf8'))[1].trim();
+  const token = await signToken({ SESSION_SECRET: secret }, { sub: 'local-test-admin', email: 'gofiodesign@gmail.com' }, 'admin', 600);
+  await context.addCookies([{ name: 'photown_admin', value: token, domain: 'localhost', path: '/', httpOnly: true, sameSite: 'Strict' }]);
+  await page.goto('/admin');
+  await expect(page.getByRole('heading', { name: 'Administración de grupos' })).toBeVisible();
+  const name = 'Prueba ' + Date.now();
+  await page.getByLabel('Nombre del nuevo grupo').fill(name);
+  await page.getByRole('button', { name: 'Crear grupo', exact: true }).click();
+  await expect(page.getByText('Grupo creado.', { exact: true })).toBeVisible();
+  const card = page.locator('.admin-row').filter({ has: page.getByRole('heading', { name, exact: true }) });
+  await card.getByRole('button', { name: 'Generar nueva invitación' }).click();
+  await expect(card.locator('.invitation')).toBeVisible();
+  const invitation = await card.locator('.invitation').textContent();
+  await page.goto('/enter'); await page.getByLabel('Código de invitación').fill(invitation);
+  await page.getByRole('button', { name: 'Entrar en PhoTown' }).click();
+  await expect(page.getByRole('button', { name: 'Fotografiar', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Fotografiar', exact: true }).click();
+  await page.getByRole('button', { name: 'Enviar', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Fotografía guardada.' })).toBeVisible();
+  await page.goto('/admin');
+  await page.locator('.admin-row').filter({ has: page.getByRole('heading', { name, exact: true }) }).getByRole('button', { name: 'Gestionar grupo' }).click();
+  await page.getByRole('button', { name: 'Aprobar', exact: true }).click();
+  await expect(page.getByText('Publicada', { exact: true })).toBeVisible();
+  await page.locator('.member-row select').selectOption('BLOCKED');
+  await page.getByRole('button', { name: 'Guardar estado' }).click();
+  await expect(page.getByText('Estado guardado.', { exact: true })).toBeVisible();
+  await page.goto('/wall'); await expect(page.locator('.photo-card')).toHaveCount(1);
+});
+test('main screens have no automated WCAG A/AA violations', async ({ page }) => {
+  for (const path of ['/', '/enter', '/admin']) {
+    await page.goto(path); await expect(page.locator('h1,h2').first()).toBeVisible();
+    expect((await new AxeBuilder({ page }).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations).toEqual([]);
+  }
+  await enter(page);
+  expect((await new AxeBuilder({ page }).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations).toEqual([]);
+  await page.getByRole('button', { name: 'Fotografiar', exact: true }).click();
+  await expect(page.locator('#photo')).toBeVisible();
+  expect((await new AxeBuilder({ page }).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations).toEqual([]);
 });

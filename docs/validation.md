@@ -33,3 +33,14 @@ Documentación oficial consultada para la implementación:
 - [Workers: límites](https://developers.cloudflare.com/workers/platform/limits/)
 - [Workers: precios](https://developers.cloudflare.com/workers/platform/pricing/)
 - [R2: precios](https://developers.cloudflare.com/r2/pricing/)
+
+## Grupos, administración y accesibilidad — 13 de septiembre de 2026
+
+- 17 pruebas de Node superadas, incluidas separación de grupos, propiedad, moderación, rotación de invitaciones, permisos administrativos, eliminación concurrente con subida y recuperación ante fallo de R2.
+- 6 recorridos de navegador superados y una séptima prueba de accesibilidad axe (WCAG 2 A/AA y 2.1 AA) superada en entrada, administración, cámara y preview. No equivale a certificación ni sustituye pruebas con usuarios.
+- Sintaxis y empaquetado del Worker verificados. Migración D1 aplicada en producción.
+- Prueba HTTPS real: administración configurada, inicio de Google con redirección correcta, entrada con invitación, subida privada pendiente, reintento sin duplicado y aparición en Mis fotos. La única fotografía sintética creada en esta comprobación se eliminó y su lectura devuelve 404.
+- Google OAuth configurado como secretos; el inicio de sesión interactivo con las cuentas autorizadas sigue pendiente de comprobación humana.
+- Dominio personalizado enlazado al Worker. Zona gofiodesign.eu activa en Cloudflare, plan Free; registro del dominio conservado en Porkbun. Se copiaron los 14 registros anteriores, incluidos MX/SPF y verificaciones Google/GitHub. Registros de web anteriores conservados como DNS only.
+- Porkbun confirma los servidores chad.ns.cloudflare.com y monroe.ns.cloudflare.com. No había DNSSEC habilitado ni registros de firma existentes que retirar.
+- El usuario confirmó la nueva redirección OAuth de photown.gofiodesign.eu. workers.dev permanece disponible durante la propagación y transición de identidades.

@@ -3,6 +3,8 @@
   "name": "photown",
   "main": "server/worker.js",
   "compatibility_date": "2026-09-13",
+  "workers_dev": true,
+  "routes": [{ "pattern": "photown.gofiodesign.eu", "custom_domain": true }],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
@@ -10,6 +12,9 @@
     "html_handling": "none"
   },
   "r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "photown-photos", "jurisdiction": "eu" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "photown-db", "database_id": "e083c537-f98b-4ea1-bc55-22bb2d7e738b", "migrations_dir": "db/migrations" }],
+  "vars": { "ADMIN_EMAILS": "gofiodesign@gmail.com,juanalbglz@gmail.com" },
+  "triggers": { "crons": ["17 * * * *"] },
   "ratelimits": [
     { "name": "ENTRY_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
     { "name": "UPLOAD_LIMITER", "namespace_id": "1002", "simple": { "limit": 12, "period": 60 } }
