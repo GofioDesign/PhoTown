@@ -10,6 +10,7 @@ import { sanitizeWebP } from '../server/webp.js';
 
 function env() {
   const sqlite = new DatabaseSync(':memory:'); sqlite.exec(readFileSync(new URL('../db/migrations/0001_groups.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../db/migrations/0002_participant_alias.sql', import.meta.url), 'utf8'));
   const db = { withSession() { return this; }, prepare(sql) {
     let args = [];
     return { bind(...values) { args = values; return this; },
@@ -55,6 +56,9 @@ test('pending photos are private; owner can describe and erase permanently; retr
   assert.equal((await upload(e, a, id)).status, 200);
   assert.equal((await upload(e, b, id)).status, 409);
   assert.equal((await call(e, `/api/images/${id}`, 'GET', b)).status, 404);
+  const download = await call(e, `/api/my-photos/${id}/download`, 'GET', a);
+  assert.equal(download.status, 200); assert.match(download.headers.get('Content-Disposition'), /attachment; filename="photown-.*\.webp"/);
+  assert.equal((await call(e, `/api/my-photos/${id}/download`, 'GET', b)).status, 404);
   assert.equal((await call(e, `/api/my-photos/${id}`, 'DELETE', b)).status, 404);
   assert.equal((await (await call(e, '/api/wall', 'GET', a)).json()).photos.length, 0);
   assert.equal((await call(e, `/api/my-photos/${id}/description`, 'POST', a, { description: 'Una sombra en una pared.' })).status, 200);
@@ -62,6 +66,7 @@ test('pending photos are private; owner can describe and erase permanently; retr
   assert.equal((await call(e, `/api/my-photos/${id}`, 'DELETE', a)).status, 200);
   assert.equal(e.objects.size, 0);
   assert.equal((await call(e, `/api/images/${id}`, 'GET', a)).status, 404);
+  assert.equal((await call(e, `/api/my-photos/${id}/download`, 'GET', a)).status, 404);
   assert.equal((await upload(e, a, id)).status, 410);
   assert.equal((await call(e, `/api/my-photos/${id}`, 'DELETE', a)).status, 200);
   const row = e.sqlite.prepare('SELECT * FROM photos WHERE id=?').get(id);
@@ -127,6 +132,27 @@ test('admin identity recovery transfers only this group and preserves moderation
   assert.equal((await upload(e, old)).status, 403);
   assert.deepEqual(await (await call(e, path, 'POST', admin, { source, target })).json(), { transferred: 0 });
   assert.equal((await call(e, `/api/my-photos/${id}`, 'DELETE', fresh)).status, 200);
+});
+
+test('aliases are optional and scoped to group; destination upload and switching require membership', async () => {
+  const e = env(), a = await join(e), admin = await adminCookie(e);
+  const group = await (await call(e, '/api/admin/groups', 'POST', admin, { name: 'Second' })).json();
+  assert.equal((await call(e, '/api/groups/select', 'POST', a, { group: group.id })).status, 403);
+  assert.equal((await call(e, '/api/photos', 'POST', a, image(), { 'Content-Type':'image/webp', 'Idempotency-Key':crypto.randomUUID(), 'X-Photown-Group':group.id })).status, 403);
+  const both = await join(e, group.code, a);
+  assert.equal((await (await call(e, '/api/groups', 'GET', both)).json()).groups.length, 2);
+  assert.equal((await call(e, '/api/profile', 'POST', both, { alias: 'x'.repeat(41) })).status, 400);
+  assert.equal((await call(e, '/api/profile', 'POST', both, { alias: ' Mirada ' })).status, 200);
+  assert.equal((await (await call(e, '/api/session', 'GET', a)).json()).alias, '');
+  assert.equal((await (await call(e, '/api/session', 'GET', both)).json()).alias, 'Mirada');
+  const id = crypto.randomUUID();
+  assert.equal((await call(e, '/api/photos', 'POST', a, image(), { 'Content-Type':'image/webp', 'Idempotency-Key':id, 'X-Photown-Group':group.id })).status, 201);
+  await call(e, `/api/admin/photos/${id}/approve`, 'POST', admin);
+  const wall = (await (await call(e, '/api/wall', 'GET', both)).json()).photos;
+  assert.equal(wall[0].alias, 'Mirada'); assert.equal(wall[0].publisher_id, undefined);
+  await call(e, '/api/profile', 'POST', both, { alias: '' });
+  assert.equal((await (await call(e, '/api/wall', 'GET', both)).json()).photos[0].alias, '');
+  assert.equal((await call(e, '/api/groups/select', 'POST', a, { group: group.id })).status, 200);
 });
 test('delete while upload is storing cannot republish the image', async () => {
   const e = env(), a = await join(e), id = crypto.randomUUID();

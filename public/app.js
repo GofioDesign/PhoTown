@@ -1,5 +1,6 @@
 import { capture } from './processing.js';
 import { renderAdmin } from './admin.js';
+import { setupInstall } from './install.js';
 
 const root = document.querySelector('#app');
 let stream;
@@ -9,6 +10,8 @@ let busy = false;
 let renderVersion = 0;
 let authenticated = false;
 let groupName = '';
+let groupId = '';
+let memberGroups = [];
 let invitedCode = '';
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const statusLabels = { uploading: 'Envío incompleto', pending: 'Pendiente de revisión', published: 'En el muro', hidden: 'Fuera del muro', deleting: 'Borrado pendiente' };
@@ -53,6 +56,7 @@ function navigate(path, replace = false) {
 }
 function shell(content) {
   root.innerHTML = content;
+  setupInstall(root);
   root.setAttribute('aria-busy', 'false');
   const heading = root.querySelector('h1, h2');
   if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
@@ -60,12 +64,27 @@ function shell(content) {
     event.preventDefault();
     navigate(element.dataset.route);
   }));
+  const selector = root.querySelector('#current-group');
+  if (selector) selector.onchange = async () => {
+    if (busy) { selector.value = groupId; return; }
+    busy = true; ++renderVersion; stopCamera();
+    root.querySelectorAll('button,input,select,textarea').forEach(control => control.disabled = true);
+    try {
+      const result = await api('/api/groups/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group: selector.value }) });
+      groupId = result.group.id; groupName = result.group.name; busy = false; render();
+    } catch (error) { busy = false; render(); message(error.message); }
+  };
 }
 function connection() {
   message(navigator.onLine ? '' : 'Sin conexión. Puedes fotografiar y enviar cuando vuelva la conexión.', '#connection');
 }
 function topbar(label) {
-  return `<header class="topbar"><a class="brand" href="/" data-route="/">PHOTOWN</a><span>${label}</span>${authenticated ? '<nav aria-label="Menú de participante"><a href="/camera" data-route="/camera">Cámara</a><a href="/my-photos" data-route="/my-photos">Mis fotos</a><a href="/wall" data-route="/wall">Muro</a><a href="/enter" data-route="/enter">Cambiar de grupo</a></nav>' : ''}</header>`;
+  return `<header class="topbar"><nav class="breadcrumb" aria-label="Ruta actual"><a class="brand" href="/" data-route="/">PHOTOWN</a><span aria-hidden="true"> / </span><label class="sr-only" for="current-group">Grupo actual</label><select id="current-group">${(memberGroups.length ? memberGroups : [{ id: groupId, name: groupName }]).map(group => `<option value="${escape(group.id)}" ${group.id === groupId ? 'selected' : ''}>${escape(group.name)}</option>`).join('')}</select><span aria-hidden="true"> / </span><span aria-current="page">${label}</span></nav>${authenticated ? '<nav aria-label="Menú de participante"><a href="/camera" data-route="/camera">Cámara</a><a href="/my-photos" data-route="/my-photos">Mis fotos</a><a href="/wall" data-route="/wall">Muro</a><a href="/enter" data-route="/enter">Añadir otro grupo</a><button type="button" data-install>Instalar app</button></nav>' : ''}</header>`;
+}
+async function refreshSession() {
+  const session = await api('/api/session'); authenticated = session.authenticated;
+  groupName = session.group?.name || ''; groupId = session.group?.id || '';
+  memberGroups = authenticated ? (await api('/api/groups')).groups : [];
 }
 function entryForm(renew = false) {
   shell(`<section class="entry"><p class="eyebrow">PHOTOWN</p><h2>${renew ? 'Vuelve a entrar.' : 'Fotografía lo que te llame la atención.'}</h2><p>En PhoTown fotografiamos en blanco y negro.<br>Después lo miraremos juntos.</p><form id="entry"><label for="code">Código de invitación</label><input id="code" name="code" type="text" required maxlength="256" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="message"><button class="primary" type="submit">${renew ? 'Continuar con mi fotografía' : 'Entrar en PhoTown'}</button></form><p id="message" class="message" role="alert"></p><p class="note">${renew ? 'Tu captura sigue aquí mientras mantengas esta página abierta.' : 'Solo necesitas tu invitación. No te pedimos nombre ni correo.'}</p></section>`);
@@ -79,7 +98,7 @@ function entryForm(renew = false) {
     message('Comprobando invitación…');
     try {
       await api('/api/enter', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: event.target.elements.code.value }) });
-      groupName = (await api('/api/session')).group?.name || '';
+      await refreshSession();
       authenticated = true;
       invitedCode = '';
       busy = false;
@@ -97,13 +116,22 @@ const cameraErrors = {
   AbortError: 'Se interrumpió la cámara. Vuelve a intentar.'
 };
 async function camera(version) {
-  shell(`<section class="camera-shell">${topbar('BLANCO Y NEGRO')}<h1 class="sr-only">Cámara</h1><div class="viewfinder" id="capture-area"><video id="camera" autoplay muted playsinline aria-label="Vista en directo de la cámara en blanco y negro"></video><p id="camera-message" class="camera-message" role="status">Abriendo la cámara…</p></div><div class="controls"><button id="shutter" class="shutter" aria-label="Fotografiar" aria-describedby="capture-help" disabled></button><button id="retry-camera" hidden>Volver a abrir la cámara</button></div><p id="capture-help" class="note">Toca la imagen o pulsa Fotografiar para hacer la foto.</p><p id="message" class="message" role="alert"></p><p id="connection" class="connection" role="status"></p></section>`);
+  shell(`<section class="camera-shell live-camera">${topbar('BLANCO Y NEGRO')}<h1 class="sr-only">Cámara</h1><div class="viewfinder" id="capture-area"><video id="camera" autoplay muted playsinline aria-label="Vista en directo de la cámara en blanco y negro"></video><p id="camera-message" class="camera-message" role="status">Abriendo la cámara…</p></div><div class="controls"><button id="shutter" class="shutter" aria-label="Fotografiar" aria-describedby="capture-help" disabled></button><button id="retry-camera" hidden>Volver a abrir la cámara</button></div><p id="capture-help" class="note">Toca la imagen o pulsa Fotografiar para hacer la foto.</p><p id="message" class="message" role="alert"></p><p id="connection" class="connection" role="status"></p></section>`);
   connection();
   const video = document.querySelector('video');
   const shutter = document.querySelector('#shutter');
   const retry = document.querySelector('#retry-camera');
+  root.querySelector('#capture-area').append(root.querySelector('.controls'));
+  if (document.fullscreenEnabled) {
+    const fullscreen = document.createElement('button'); fullscreen.id = 'fullscreen'; fullscreen.type = 'button'; fullscreen.textContent = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa';
+    fullscreen.onclick = async () => {
+      try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); fullscreen.textContent = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa'; }
+      catch { message('Puedes instalar PhoTown para abrirla sin la barra del navegador.'); }
+    };
+    root.querySelector('.controls').append(fullscreen);
+  }
   document.querySelector('.camera-shell').addEventListener('click', event => {
-    if (event.target.closest('button, a, input, select, textarea, label, nav, header')) return;
+    if (event.target.closest('button, a, input, select, textarea, label, nav, header, dialog')) return;
     if (!shutter.disabled) shutter.click();
   });
   retry.addEventListener('click', () => render());
@@ -151,6 +179,15 @@ function preview() {
   if (!shot) { navigate('/camera', true); return; }
   shell(`<section class="camera-shell">${topbar('TU FOTOGRAFÍA')}<h1 class="sr-only">Vista previa de tu fotografía</h1><div class="viewfinder"><img class="photograph" id="photo" alt="Tu fotografía en blanco y negro"></div><div class="controls"><button id="again">Repetir</button><button class="primary" id="publish">Enviar</button></div><p id="message" class="message" role="status"></p><p id="connection" class="connection" role="status"></p></section>`);
   document.querySelector('#photo').src = shotUrl;
+  const destinations = document.createElement('fieldset'); destinations.className = 'destinations';
+  destinations.innerHTML = '<legend>Enviar esta fotografía a</legend><p class="note">Selecciona uno o varios grupos. Cada copia se modera y se gestiona en su grupo.</p>';
+  const choices = shot.deliveries || memberGroups.filter(group => group.status !== 'BLOCKED');
+  for (const group of choices) {
+    const label = document.createElement('label'), input = document.createElement('input'); input.type = 'checkbox'; input.value = group.id;
+    input.checked = Boolean(shot.deliveries) || group.id === groupId; input.disabled = Boolean(shot.deliveries);
+    label.append(input, document.createTextNode(group.name)); destinations.append(label);
+  }
+  root.querySelector('.controls').before(destinations);
   connection();
   document.querySelector('#again').addEventListener('click', () => {
     if (busy) return;
@@ -159,21 +196,33 @@ function preview() {
   });
   document.querySelector('#publish').addEventListener('click', async () => {
     if (busy || !shot) return;
+    if (!shot.deliveries) {
+      const selected = [...destinations.querySelectorAll('input:checked')];
+      if (!selected.length) { message('Selecciona al menos un grupo.'); return; }
+      shot.deliveries = selected.map((input, index) => ({ id: input.value, name: memberGroups.find(group => group.id === input.value)?.name || '', photoId: index === 0 ? shot.id : crypto.randomUUID(), result: null }));
+    }
+    destinations.querySelectorAll('input').forEach(input => input.disabled = true);
     busy = true;
     const buttons = [...root.querySelectorAll('button')];
     buttons.forEach(button => button.disabled = true);
     message('Enviando fotografía…');
     try {
-      const result = await api('/api/photos', { method: 'POST', headers: { 'Content-Type': 'image/webp', 'Idempotency-Key': shot.id }, body: shot.blob });
+      for (const destination of shot.deliveries) {
+        if (!destination.result) destination.result = await api('/api/photos', { method: 'POST', headers: { 'Content-Type': 'image/webp', 'Idempotency-Key': destination.photoId, 'X-Photown-Group': destination.id }, body: shot.blob });
+      }
+      const result = { status: shot.deliveries.some(destination => destination.result.status === 'pending') ? 'pending' : 'published' };
+      const delivered = shot.deliveries.map(destination => destination.name).join(', ');
       clearShot();
       shell(`<section class="entry"><p class="eyebrow">PHOTOWN</p><h2>Fotografía guardada.</h2><p>${result.status === 'pending' ? 'La persona que coordina el grupo la revisará antes de mostrarla en el muro.' : 'Gracias por compartir tu mirada.'}</p><button id="continue" class="primary">Seguir fotografiando</button><a class="button secondary-link" href="/my-photos" data-route="/my-photos">Ver mis fotos</a></section>`);
       document.querySelector('#continue').addEventListener('click', () => navigate('/camera', true));
+      const receipt = document.createElement('p'); receipt.textContent = `Enviada a: ${delivered}`; root.querySelector('h2').after(receipt);
     } catch (error) {
       if (error.status === 401) {
         authenticated = false;
         entryForm(true);
       } else {
-        message(`${error.message}\nTu fotografía sigue aquí. Puedes volver a enviarla.`);
+        const sent = shot.deliveries.filter(destination => destination.result).map(destination => destination.name);
+        message(`${error.message}\n${sent.length ? 'Ya enviada a: ' + sent.join(', ') + '. ' : ''}Tu fotografía sigue aquí. Puedes volver a enviarla; solo se reintentarán los grupos pendientes.`);
         document.querySelector('#publish').textContent = 'Reintentar envío';
       }
     } finally { busy = false; buttons.forEach(button => button.disabled = false); }
@@ -202,6 +251,16 @@ async function gallery(version, mine) {
       const session = await api('/api/session');
       if (version !== renderVersion) return;
       identityBox.querySelector('input').value = session.identity || '';
+      const aliasForm = document.createElement('form');
+      aliasForm.innerHTML = '<label for="my-alias">Mi alias (opcional)</label><input id="my-alias" maxlength="40" autocomplete="nickname" aria-describedby="alias-help"><p id="alias-help" class="note">Aparecerá junto a tus fotos en el muro de este grupo. Déjalo vacío para retirar la atribución.</p><button>Guardar alias</button><p role="status"></p>';
+      aliasForm.querySelector('input').value = session.alias || '';
+      identityBox.before(aliasForm);
+      aliasForm.onsubmit = async event => {
+        event.preventDefault(); const button = aliasForm.querySelector('button'); button.disabled = true;
+        try { const result = await api('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ alias: aliasForm.querySelector('input').value }) }); aliasForm.querySelector('input').value = result.alias; aliasForm.querySelector('[role=status]').textContent = 'Alias guardado.'; }
+        catch (error) { aliasForm.querySelector('[role=status]').textContent = error.message; }
+        finally { button.disabled = false; }
+      };
       identityBox.querySelector('button').onclick = async () => {
         try { await navigator.clipboard.writeText(session.identity); identityBox.querySelector('[role=status]').textContent = 'Identidad copiada.'; }
         catch { identityBox.querySelector('input').select(); identityBox.querySelector('[role=status]').textContent = 'Copia la identidad seleccionada.'; }
@@ -220,6 +279,11 @@ async function gallery(version, mine) {
         const unavailable = ['uploading','deleting'].includes(photo.status);
         card.innerHTML = `${unavailable ? '<p>La fotografía no está disponible.</p>' : `<img loading="lazy" src="/api/images/${photo.id}" alt="${escape(photo.description || 'Fotografía en blanco y negro, sin descripción disponible.')}">`}${mine ? `<p class="note">${escape(statusLabels[photo.status])} · ${escape(new Date(photo.created_at).toLocaleDateString('es'))}</p><form class="description-form"><label for="description-${photo.id}">Descripción de la imagen (opcional)</label><textarea id="description-${photo.id}" maxlength="500" rows="3">${escape(photo.description)}</textarea><button type="submit">Guardar descripción</button></form><button class="delete-photo">${photo.status === 'deleting' ? 'Reintentar borrado' : 'Borrar fotografía'}</button><p class="card-message" role="status"></p>` : ''}`;
         if (mine) {
+          if (!unavailable) {
+            const download = document.createElement('a'); download.className = 'button secondary-link';
+            download.href = `/api/my-photos/${photo.id}/download`; download.download = `photown-${photo.id}.webp`; download.textContent = 'Descargar fotografía';
+            card.querySelector('.description-form').before(download);
+          }
           const status = card.querySelector('.card-message');
           card.querySelector('.description-form').addEventListener('submit', async event => {
             event.preventDefault(); const button = event.target.querySelector('button'); button.disabled = true;
@@ -233,6 +297,12 @@ async function gallery(version, mine) {
             catch (error) { status.textContent = `${error.message} Puedes reintentar el borrado.`; event.target.disabled = false; }
           });
         }
+        if (!mine && !unavailable) {
+          const img = card.querySelector('img');
+          const open = document.createElement('button'); open.className = 'open-photo'; open.setAttribute('aria-label', 'Ver fotografía a tamaño completo');
+          img.replaceWith(open); open.append(img); open.onclick = () => showPhoto(photo);
+          if (photo.alias) { const credit = document.createElement('p'); credit.className = 'photo-credit'; credit.textContent = `Foto de ${photo.alias}`; card.append(credit); }
+        }
         container.append(card);
       }
       cursor = page.next; more.hidden = !cursor;
@@ -244,6 +314,16 @@ async function gallery(version, mine) {
     } finally { loading = false; more.disabled = false; }
   };
   more.addEventListener('click', load); await load();
+}
+function showPhoto(photo) {
+  const previous = document.activeElement, dialog = document.createElement('dialog'); dialog.className = 'photo-viewer';
+  dialog.setAttribute('aria-label', 'Fotografía a tamaño completo');
+  dialog.innerHTML = '<form method="dialog"><button autofocus>Cerrar fotografía</button></form><img><p class="photo-credit"></p><a target="_blank" rel="noopener">Abrir imagen original</a>';
+  const img = dialog.querySelector('img'); img.src = `/api/images/${photo.id}`; img.alt = photo.description || 'Fotografía sin descripción disponible';
+  dialog.querySelector('p').textContent = photo.alias ? `Foto de ${photo.alias}` : '';
+  dialog.querySelector('a').href = img.src;
+  dialog.addEventListener('close', () => { dialog.remove(); previous?.focus(); }, { once: true });
+  root.append(dialog); dialog.showModal();
 }
 function render() {
   const version = ++renderVersion;
@@ -258,7 +338,8 @@ function render() {
   }
   const path = location.pathname;
   if (path === '/') {
-    shell(`<section class="entry"><h1 class="wordmark">PHOTOWN</h1><p class="intro">Un diario fotográfico compartido.</p><button class="primary" id="enter">Entrar</button><a class="secondary-link" href="/admin" data-route="/admin">Administración</a></section>`);
+    if (authenticated) { navigate(shot ? '/preview' : '/camera', true); return; }
+    shell(`<section class="entry"><h1 class="wordmark">PHOTOWN</h1><p class="intro">Un diario fotográfico compartido.</p><button class="primary" id="enter">Entrar</button><button type="button" data-install>Instalar app</button><a class="secondary-link" href="/admin" data-route="/admin">Administración</a></section>`);
     document.querySelector('#enter').addEventListener('click', () => navigate(authenticated ? '/camera' : '/enter'));
   } else if (path === '/enter') entryForm(Boolean(shot));
   else if (path === '/admin') renderAdmin({ root, api, shell, current: () => version === renderVersion, confirmDeletion });
@@ -271,6 +352,7 @@ function render() {
 }
 addEventListener('popstate', () => { if (!busy) render(); });
 addEventListener('online', connection);
+document.addEventListener('fullscreenchange', () => { const button = document.querySelector('#fullscreen'); if (button) button.textContent = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa'; });
 addEventListener('offline', connection);
 addEventListener('pagehide', () => { ++renderVersion; stopCamera(); });
 addEventListener('pageshow', event => { if (event.persisted) render(); });
@@ -282,6 +364,6 @@ document.addEventListener('visibilitychange', () => {
 addEventListener('beforeunload', event => {
   if (shot || busy) { event.preventDefault(); event.returnValue = ''; }
 });
-try { const session = await api('/api/session'); authenticated = session.authenticated; groupName = session.group?.name || ''; }
+try { await refreshSession(); }
 catch { /* Entry remains available if the initial session check has no connection. */ }
 render();

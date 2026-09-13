@@ -14,6 +14,12 @@ La fotografía se conserva en memoria cuando falla el envío y los reintentos us
 
 **Todavía no es el MVP completo:** falta Weekly Review y la validación del piloto. El alcance se amplió por petición del usuario para incluir grupos, Google administrativo y gestión de fotos propias. Las capturas anteriores del sprint 1 no tienen autor y no se atribuyen automáticamente a ningún participante. Consulta [Google, permisos y accesibilidad](docs/google-admin.md).
 
+En Mis fotos, cada fotografía disponible incluye «Descargar fotografía»: descarga el WebP original en blanco y negro, con acceso restringido a su propietario. Próximas prioridades: [UI y cámaras móviles](docs/next-sprint.md).
+
+Alias opcional por grupo con atribución en el muro, imágenes ampliables y cabecera con selector de grupo. Antes de enviar se eligen uno o varios grupos ya autorizados; cada copia mantiene moderación y borrado independientes. Los reintentos omiten destinos confirmados y deduplican respuestas perdidas.
+
+Disparador sobre el visor, pantalla completa cuando el navegador la admite e instalación como app en modo standalone. «Instalar app» ofrece el diálogo nativo o instrucciones para añadir PhoTown a la pantalla de inicio. La app necesita conexión y no guarda fotos privadas en caché offline.
+
 ## Ejecutar en local
 
 Requisitos: Node.js 22 o posterior y pnpm 11 (lockfile incluido). No hace falta una cuenta de Cloudflare para la simulación local.

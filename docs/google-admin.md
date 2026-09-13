@@ -42,6 +42,10 @@ Esto no certifica conformidad WCAG ni sustituye pruebas con personas con discapa
 
 ## Borrado y privacidad
 
+El alias opcional se guarda por grupo, admite hasta 40 caracteres y puede retirarse dejándolo vacío. No es una identidad verificada ni un nombre único. El muro muestra el alias actual; tras recuperar una identidad, las fotos usan el alias del destino.
+
+Cada envío a varios grupos crea una copia independiente. Descargar o borrar desde Mis fotos actúa sobre la copia del grupo seleccionado en la cabecera. Cambiar de grupo no concede acceso a grupos nuevos, que siguen requiriendo invitación.
+
 El participante puede borrar sus fotos del grupo actual, incluso si están pendientes u ocultas. El servidor verifica propiedad y grupo. La retirada del muro es inmediata; el archivo de R2 se elimina antes de confirmar el éxito. Si R2 falla, queda inaccesible y se reintenta desde Mis fotos o mediante una tarea periódica.
 
 Se conserva un registro mínimo de identificador/ruta, sin propietario, descripción ni hash de imagen, para impedir que un reenvío resucite el archivo y para retirar escrituras tardías. El borrado no puede retirar copias que otra persona ya haya visto/capturado ni alterar de inmediato las retenciones de recuperación del proveedor. No hay una papelera recuperable desde PhoTown.
@@ -49,3 +53,5 @@ Se conserva un registro mínimo de identificador/ruta, sin propietario, descripc
 Las fotografías del sprint 1 no tenían publisher y no se atribuyen automáticamente a ningún navegador. Cada nueva participación genera una identidad persistente con cookie HttpOnly; borrarla pierde el acceso automático a las fotos propias. El administrador puede reasignarlas mediante el procedimiento anterior, tras comprobar con la persona su autoría. No hay recuperación automática mediante Google ni correo del participante.
 
 Las cookies pertenecen a cada dominio. Al cambiar desde workers.dev hay que entrar de nuevo con la invitación; las fotos hechas desde la dirección anterior siguen asociadas a la identidad de ese navegador en la dirección anterior. No se transfieren automáticamente entre dominios.
+
+Instalar en pantalla de inicio puede abrir un contexto con identidad distinta: entrar con la invitación y utilizar recuperación administrativa si es necesario reasignar las fotos anteriores.

@@ -4,6 +4,10 @@ import { signToken } from '../../server/tokens.js';
 import AxeBuilder from '@axe-core/playwright';
 
 const code = process.env.PHOTOWN_TEST_CODE;
+test.beforeEach(async ({ context }) => {
+  // Distinct simulated clients for the real local rate limiter.
+  await context.setExtraHTTPHeaders({ 'CF-Connecting-IP': `2001:db8::${Math.floor(Math.random()*65535).toString(16)}` });
+});
 test.beforeAll(() => {
   if (!code) throw new Error('Set PHOTOWN_TEST_CODE to the INVITE_CODE in your local .dev.vars.');
 });
@@ -114,6 +118,9 @@ test('visible invitation, whole-viewfinder capture, keyboard controls and perman
   await page.getByRole('button', { name: 'Enviar', exact: true }).click();
   await page.getByRole('link', { name: 'Ver mis fotos' }).click();
   await expect(page.locator('.photo-card')).toHaveCount(1);
+  const downloaded = page.waitForEvent('download');
+  await page.getByRole('link', { name: 'Descargar fotografía', exact: true }).click();
+  const file = await downloaded; expect(file.suggestedFilename()).toMatch(/^photown-.*\.webp$/); expect(await file.failure()).toBeNull();
   await page.getByLabel('Descripción de la imagen (opcional)').fill('Una imagen de prueba en blanco y negro.');
   await page.getByRole('button', { name: 'Guardar descripción' }).click();
   await expect(page.getByText('Descripción guardada.')).toBeVisible();
@@ -129,7 +136,7 @@ test('visible invitation, whole-viewfinder capture, keyboard controls and perman
 test('admin can create group, rotate invitation, moderate and block participants using actual D1', async ({ page, context }) => {
   // Local-only fixture. No test-only authentication endpoint is shipped.
   const secret = /^SESSION_SECRET=(.+)$/m.exec(readFileSync('.dev.vars', 'utf8'))[1].trim();
-  const token = await signToken({ SESSION_SECRET: secret }, { sub: 'local-test-admin', email: 'gofiodesign@gmail.com' }, 'admin', 600);
+  const token = await signToken({ SESSION_SECRET: secret }, { sub: 'local-test-admin-' + crypto.randomUUID(), email: 'gofiodesign@gmail.com' }, 'admin', 600);
   await context.addCookies([{ name: 'photown_admin', value: token, domain: 'localhost', path: '/', httpOnly: true, sameSite: 'Strict' }]);
   await page.goto('/admin');
   await expect(page.getByRole('heading', { name: 'Administración de grupos' })).toBeVisible();
@@ -188,4 +195,66 @@ test('main screens have no automated WCAG A/AA violations', async ({ page }) => 
   await page.getByRole('button', { name: 'Fotografiar', exact: true }).click();
   await expect(page.locator('#photo')).toBeVisible();
   expect((await new AxeBuilder({ page }).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations).toEqual([]);
+});
+
+test('group destinations retry safely, aliases credit the wall and photos open full size', async ({ page, context }) => {
+  const secret = /^SESSION_SECRET=(.+)$/m.exec(readFileSync('.dev.vars', 'utf8'))[1].trim();
+  const token = await signToken({ SESSION_SECRET: secret }, { sub: 'local-test-admin-' + crypto.randomUUID(), email: 'gofiodesign@gmail.com' }, 'admin', 600);
+  await context.addCookies([{ name:'photown_admin', value:token, domain:'localhost', path:'/', httpOnly:true, sameSite:'Strict' }]);
+  const post = (path, data) => page.request.post(path, { headers:{Origin:'http://localhost:8787'}, data });
+  const first = await (await post('/api/admin/groups', {name:'Destino A '+Date.now()})).json();
+  const second = await (await post('/api/admin/groups', {name:'Destino B '+Date.now()})).json();
+  expect((await post('/api/enter', {code:first.code})).status()).toBe(200); expect((await post('/api/enter', {code:second.code})).status()).toBe(200);
+  await page.goto('/my-photos'); await page.getByLabel('Grupo actual').selectOption(first.id);
+  await expect(page.getByLabel('Mi alias (opcional)')).toBeVisible();
+  await page.getByLabel('Mi alias (opcional)').fill('Mi mirada'); await page.getByRole('button',{name:'Guardar alias'}).click();
+  await expect(page.getByText('Alias guardado.')).toBeVisible();
+  await page.getByRole('link',{name:'Cámara',exact:true}).click();
+  await page.getByRole('button',{name:'Fotografiar',exact:true}).click();
+  await page.locator(`.destinations input[value="${second.id}"]`).check();
+  let lost = false;
+  await page.route('**/api/photos', async route => {
+    if (route.request().headers()['x-photown-group'] === second.id && !lost) { lost = true; await route.fetch(); await route.abort('connectionreset'); }
+    else await route.continue();
+  });
+  await page.getByRole('button',{name:'Enviar',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Reintentar envío'})).toBeVisible();
+  await page.getByRole('button',{name:'Reintentar envío'}).click();
+  await expect(page.getByRole('heading',{name:'Fotografía guardada.'})).toBeVisible();
+  const firstPhotos = (await (await page.request.get(`/api/admin/groups/${first.id}/photos`)).json()).photos;
+  const secondPhotos = (await (await page.request.get(`/api/admin/groups/${second.id}/photos`)).json()).photos;
+  expect(firstPhotos).toHaveLength(1); expect(secondPhotos).toHaveLength(1);
+  await post(`/api/admin/photos/${firstPhotos[0].id}/approve`, {});
+  await page.goto('/wall'); await expect(page.getByText('Foto de Mi mirada',{exact:true})).toBeVisible();
+  const open = page.getByRole('button',{name:'Ver fotografía a tamaño completo'});
+  await open.click(); await expect(page.getByRole('dialog',{name:'Fotografía a tamaño completo'})).toBeVisible();
+  await page.keyboard.press('Escape'); await expect(open).toBeFocused();
+  await page.getByRole('link',{name:'PHOTOWN',exact:true}).click();
+  await expect(page).toHaveURL(/\/camera$/); await expect(page.getByLabel('Grupo actual')).toHaveValue(first.id);
+  await page.getByRole('button',{name:'Fotografiar',exact:true}).click();
+  const captureUrl = await page.locator('#photo').getAttribute('src');
+  await page.getByRole('link',{name:'PHOTOWN',exact:true}).click();
+  await expect(page).toHaveURL(/\/preview$/); await expect(page.locator('#photo')).toHaveAttribute('src',captureUrl);
+});
+
+test('portrait camera controls fit the viewport and installation guidance is available', async ({ page }) => {
+  await page.setViewportSize({width:360,height:640}); await enter(page);
+  for (const size of [{width:360,height:640},{width:390,height:844},{width:320,height:568}]) {
+    await page.setViewportSize(size);
+    const box = await page.getByRole('button',{name:'Fotografiar',exact:true}).boundingBox();
+    expect(box.y).toBeGreaterThanOrEqual(0); expect(box.y+box.height).toBeLessThanOrEqual(size.height);
+    const visor = await page.locator('#capture-area').boundingBox(); expect(box.y).toBeGreaterThan(visor.y); expect(box.y+box.height).toBeLessThanOrEqual(visor.y+visor.height);
+  }
+  await page.screenshot({path:'test-results/camera-portrait.png'});
+  if (await page.evaluate(() => document.fullscreenEnabled)) {
+    await page.getByRole('button',{name:'Pantalla completa',exact:true}).click();
+    await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement))).toBe(true);
+    await page.getByRole('button',{name:'Salir de pantalla completa',exact:true}).click();
+    await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement))).toBe(false);
+  }
+  await page.goto('/'); await page.getByRole('button',{name:'Instalar app'}).click();
+  await expect(page.getByRole('dialog',{name:'Instalar PhoTown'})).toBeVisible();
+  await page.getByRole('button',{name:'Cerrar instrucciones'}).click();
+  const manifest = await (await page.request.get('/manifest.webmanifest')).json(); expect(manifest.display).toBe('standalone');
+  expect((await page.request.get('/icon-192.png')).status()).toBe(200);
 });

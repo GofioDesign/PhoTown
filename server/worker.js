@@ -69,8 +69,8 @@ async function route(request, env) {
   if (['/', '/enter', '/camera', '/preview'].includes(url.pathname)) {
     return env.ASSETS.fetch(new Request(new URL('/index.html', url), request));
   }
-  // No route serves R2 objects, lists photographs, or exposes configuration.
-  if (['/app.js', '/admin.js', '/processing.js', '/styles.css', '/robots.txt'].includes(url.pathname)) return env.ASSETS.fetch(request);
+  // Public app assets only; photographs are authorized by communityRoute.
+  if (['/app.js', '/admin.js', '/processing.js', '/install.js', '/styles.css', '/robots.txt', '/sw.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'].includes(url.pathname)) return env.ASSETS.fetch(request);
   return new Response('Página no encontrada', { status: 404 });
 }
 export default {

@@ -29,7 +29,7 @@ async function identity(request, env, db) {
 async function participant(request, env, db) {
   const [publisher, access] = await Promise.all([identity(request, env, db), verifyToken(env, cookieValue(request, 'photown_group'), 'participant')]);
   if (!publisher || !access || access.publisher !== publisher.id) return null;
-  const member = await db.prepare('SELECT m.status,g.id AS group_id,g.name,g.active FROM memberships m JOIN groups g ON g.id=m.group_id WHERE m.publisher_id=? AND m.group_id=?').bind(publisher.id, access.group).first();
+  const member = await db.prepare('SELECT m.status,m.alias,g.id AS group_id,g.name,g.active FROM memberships m JOIN groups g ON g.id=m.group_id WHERE m.publisher_id=? AND m.group_id=?').bind(publisher.id, access.group).first();
   return member?.active ? { ...member, publisher_id: publisher.id } : null;
 }
 async function enter(request, env, db) {
@@ -65,7 +65,7 @@ async function listPhotos(db, where, bindings, url) {
     if (!Array.isArray(pair) || pair.length !== 2 || !pair.every(v => typeof v === 'string' && v.length < 100)) throw new HttpError(400, 'La página solicitada no es válida.');
     clause += ' AND (created_at < ? OR (created_at = ? AND id < ?))'; args.push(pair[0], pair[0], pair[1]);
   }
-  const result = await db.prepare(`SELECT id,description,status,week,created_at,publisher_id FROM photos WHERE ${clause} ORDER BY created_at DESC,id DESC LIMIT 25`).bind(...args).all();
+  const result = await db.prepare(`SELECT id,description,status,week,created_at,publisher_id,(SELECT alias FROM memberships WHERE memberships.publisher_id=photos.publisher_id AND memberships.group_id=photos.group_id) AS alias FROM photos WHERE ${clause} ORDER BY created_at DESC,id DESC LIMIT 25`).bind(...args).all();
   const more = result.results.length > 24, photos = result.results.slice(0, 24), last = photos.at(-1);
   return { photos, next: more ? btoa(JSON.stringify([last.created_at, last.id])) : null };
 }
@@ -182,7 +182,7 @@ export async function communityRoute(request, env) {
   if (path.startsWith('/api/admin/')) return adminRoutes(request, env, db, url);
   if (path === '/api/enter' && request.method === 'POST') return enter(request, env, db);
   const user = await participant(request, env, db);
-  if (path === '/api/session' && request.method === 'GET') return json({ authenticated: Boolean(user), group: user ? { id: user.group_id, name: user.name } : null, status: user?.status, identity: user?.publisher_id });
+  if (path === '/api/session' && request.method === 'GET') return json({ authenticated: Boolean(user), group: user ? { id: user.group_id, name: user.name } : null, status: user?.status, identity: user?.publisher_id, alias: user?.alias });
   const imageMatch = /^\/api\/images\/([a-f0-9-]+)$/.exec(path);
   if (imageMatch && request.method === 'GET') {
     const photo = await db.prepare("SELECT * FROM photos WHERE id=? AND status IN ('pending','published','hidden')").bind(imageMatch[1]).first();
@@ -198,19 +198,46 @@ export async function communityRoute(request, env) {
     return env.ASSETS.fetch(new Request(new URL('/index.html', url), request));
   }
   if (!user) throw new HttpError(401, 'Tu acceso ha caducado. Introduce de nuevo tu invitación.');
-  if (path === '/api/photos' && request.method === 'POST') return upload(request, env, db, user);
+  if (path === '/api/groups' && request.method === 'GET') return json({ groups: (await db.prepare('SELECT g.id,g.name,m.status FROM memberships m JOIN groups g ON g.id=m.group_id WHERE m.publisher_id=? AND g.active=1 ORDER BY g.name,g.id').bind(user.publisher_id).all()).results });
+  if (path === '/api/groups/select' && request.method === 'POST') {
+    const { group } = await bodyJSON(request);
+    const member = await db.prepare('SELECT g.id,g.name FROM memberships m JOIN groups g ON g.id=m.group_id WHERE m.publisher_id=? AND g.id=? AND g.active=1').bind(user.publisher_id, typeof group === 'string' ? group : '').first();
+    if (!member) throw new HttpError(403, 'Primero necesitas una invitación para ese grupo.');
+    return json({ group: member }, 200, { 'Set-Cookie': cookieHeader(request, 'photown_group', await signToken(env, { publisher: user.publisher_id, group: member.id }, 'participant', 43200), 43200) });
+  }
+  if (path === '/api/profile' && request.method === 'POST') {
+    await rate(env.UPLOAD_LIMITER, user.publisher_id);
+    const body = await bodyJSON(request);
+    if (typeof body?.alias !== 'string' || body.alias.length > 40 || /[\u0000-\u001f\u007f]/.test(body.alias)) throw new HttpError(400, 'El alias debe tener hasta 40 caracteres y ocupar una sola línea.');
+    const alias = body.alias.trim();
+    await db.prepare('UPDATE memberships SET alias=? WHERE group_id=? AND publisher_id=?').bind(alias, user.group_id, user.publisher_id).run();
+    return json({ alias });
+  }
+  if (path === '/api/photos' && request.method === 'POST') {
+    const destination = request.headers.get('X-Photown-Group');
+    if (!destination || destination === user.group_id) return upload(request, env, db, user);
+    const member = await db.prepare('SELECT m.status,g.id AS group_id FROM memberships m JOIN groups g ON g.id=m.group_id WHERE m.publisher_id=? AND g.id=? AND g.active=1').bind(user.publisher_id, destination).first();
+    if (!member) throw new HttpError(403, 'No puedes enviar a este grupo. Comprueba tu invitación.');
+    return upload(request, env, db, { ...member, publisher_id: user.publisher_id });
+  }
   if (path === '/api/my-photos' && request.method === 'GET') return json(await listPhotos(db, "group_id=? AND publisher_id=? AND status NOT IN ('deleted')", [user.group_id, user.publisher_id], url));
   if (path === '/api/wall' && request.method === 'GET') {
     const page = await listPhotos(db, "group_id=? AND status='published'", [user.group_id], url);
     page.photos.forEach(photo => { delete photo.publisher_id; }); return json(page);
   }
-  const own = /^\/api\/my-photos\/([a-f0-9-]+)(\/description)?$/.exec(path);
+  const own = /^\/api\/my-photos\/([a-f0-9-]+)(\/description|\/download)?$/.exec(path);
   if (own) {
     if (request.method === 'DELETE' && (await db.prepare("SELECT id FROM photos WHERE id=? AND status='deleted'").bind(own[1]).first())) return json({ deleted: true });
     const photo = await db.prepare('SELECT * FROM photos WHERE id=? AND publisher_id=? AND group_id=?').bind(own[1], user.publisher_id, user.group_id).first();
     if (!photo) throw new HttpError(404, 'No se encuentra esta fotografía entre tus fotos.');
+    if (request.method === 'GET' && own[2] === '/download') {
+      if (!['pending','published','hidden'].includes(photo.status)) throw new HttpError(404, 'Esta fotografía ya no está disponible.');
+      const object = await env.PHOTOS.get(photo.image_key);
+      if (!object) throw new HttpError(404, 'Esta fotografía ya no está disponible.');
+      return new Response(object.body, { headers: { 'Content-Type': 'image/webp', 'Content-Disposition': `attachment; filename="photown-${photo.id}.webp"`, 'Cache-Control': 'private, no-store' } });
+    }
     if (request.method === 'DELETE' && !own[2]) { await erasePhoto(env, db, photo); return json({ deleted: true }); }
-    if (request.method === 'POST' && own[2]) {
+    if (request.method === 'POST' && own[2] === '/description') {
       const body = await bodyJSON(request);
       if (typeof body?.description !== 'string' || body.description.length > 500) throw new HttpError(400, 'La descripción debe tener como máximo 500 caracteres.');
       await db.prepare("UPDATE photos SET description=? WHERE id=? AND status NOT IN ('deleting','deleted')").bind(body.description.trim(), photo.id).run(); return json({ ok: true });
