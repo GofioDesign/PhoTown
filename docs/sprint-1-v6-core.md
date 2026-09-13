@@ -4,7 +4,7 @@
 
 Este sprint introduce mediante una migración aditiva la base persistente del programa v6 sin deduplicar, borrar ni reinterpretar las fotografías existentes. Todos los grupos anteriores se migran como identificados y reciben un WALL inicial que contiene sus publicaciones actuales en orden cronológico estable.
 
-Las cuentas Google autorizadas actuales continúan como superadmin global y, cuando se autentican, reciben también una membresía admin independiente en los grupos existentes. El rol global y el rol de grupo se almacenan y evalúan por separado.
+Las cuentas Google configuradas mediante el secreto `SUPERADMIN_EMAILS` actúan como superadmin global. Superadmin asigna admins y moderators por GROUP mediante su correo OAuth. El rol global y el rol de grupo se almacenan y evalúan por separado.
 
 ## Modelo añadido
 
@@ -35,7 +35,7 @@ CAMERA fija el GROUP de origen al capturar. La vista previa informa de ese grupo
 
 Una publicación de confianza recibe `published_at` y se añade al final del WALL abierto. Una aprobación administrativa hace lo mismo de forma idempotente.
 
-Las lecturas administrativas de fotografías y avatares comprueban ahora una membresía admin o moderator del GROUP. Las operaciones administrativas mutables actuales requieren admin. La allowlist OAuth continúa habilitando el acceso de las dos cuentas actuales, pero su autoridad de grupo se materializa en MEMBERSHIP.
+Las lecturas administrativas de fotografías y avatares comprueban ahora una membresía admin o moderator del GROUP. Las operaciones administrativas mutables actuales requieren admin. Las asignaciones por correo se materializan en MEMBERSHIP durante el primer acceso OAuth.
 
 ## Compatibilidad temporal
 
