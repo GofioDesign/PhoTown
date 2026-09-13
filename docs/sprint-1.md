@@ -37,6 +37,8 @@ Se cierran las pistas de cámara al cambiar de pantalla, ocultar la pestaña o a
 
 Estas casillas no se consideran aprobadas por pasar pruebas sintéticas. El sprint entrega código comprobable, no la validación del ciclo semanal ni el Alpha.
 
+Comprobación comunicada por el usuario: la cámara abre en Chrome y Edge de escritorio, pero no en el navegador integrado de ChatGPT. Utilizar un navegador externo para las pruebas de cámara; no se ha diagnosticado aún la causa en el navegador integrado.
+
 ## Más adelante: aviso de exposición
 
 Petición del usuario: opción para señalar **en rojo**, sobre la vista de cámara en BN, las luces quemadas y las sombras sin detalle como ayuda para detectar exceso o carencia de iluminación.

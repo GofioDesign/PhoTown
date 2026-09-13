@@ -2,6 +2,8 @@
 
 Un diario fotográfico compartido para mirar, fotografiar y aprender juntos.
 
+Instalación HTTPS: https://photown.photown.workers.dev (acceso mediante invitación privada).
+
 ## Sprint 1 — Camera
 
 Implementado: entrada mínima, invitación privada, cámara **en blanco y negro en directo**, captura BN, vista previa, repetir, enviar y almacenamiento privado en R2. Interfaz en español, responsive, sin selector de archivos ni acceso al carrete. Sin bibliotecas de UI, fuentes externas ni servicios de seguimiento.
@@ -44,7 +46,7 @@ Las pruebas cubren conversión BN, acceso, cookies, límites, validación, metad
 
 1. Autenticarse con `pnpm exec wrangler login` en la cuenta elegida.
 2. Revisar las [tarifas de Workers](https://developers.cloudflare.com/workers/platform/pricing/), [tarifas de R2](https://developers.cloudflare.com/r2/pricing/) y [límites](https://developers.cloudflare.com/workers/platform/limits/). No se presupone gratuidad ni se crea facturación automáticamente con este repositorio.
-3. Crear un bucket privado con `pnpm exec wrangler r2 bucket create photown-photos` o cambiar `bucket_name` en `wrangler.jsonc` al bucket privado de la instalación. **No activar r2.dev ni un dominio público de R2.**
+3. Esta instalación utiliza el bucket privado `photown-photos` con jurisdicción `eu`. Para una instalación nueva equivalente: `pnpm exec wrangler r2 bucket create photown-photos --jurisdiction eu`. Si usas otro bucket, ajustar `bucket_name` y `jurisdiction` en `wrangler.jsonc`. **No activar r2.dev ni un dominio público de R2.**
 4. Configurar secretos independientes de desarrollo mediante `pnpm exec wrangler secret put INVITE_CODE` y `pnpm exec wrangler secret put SESSION_SECRET`. Usar valores aleatorios largos; no incluirlos en código, URLs o GitHub.
 5. Ejecutar `pnpm build` para validar el paquete y `pnpm deploy` para publicar en la cuenta seleccionada.
 6. Comprobar desde otro navegador que `/camera` redirige a invitación y que `POST /api/photos` sin cookie no permite escribir. Realizar la lista de pruebas móviles antes de invitar participantes.

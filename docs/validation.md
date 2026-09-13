@@ -12,7 +12,16 @@ Comprobaciones realizadas el 13 de septiembre de 2026:
 - Capturas de interfaz revisadas a 390 × 844 y 1440 × 1000: controles visibles e imagen sin recorte.
 - Validación de sintaxis y empaquetado de Worker/Static Assets con `wrangler deploy --dry-run`.
 
-No se ha realizado un despliegue de producción ni una prueba con R2 remoto. Las pruebas físicas en Safari/iPhone, Android, cambios de orientación y proyector quedan pendientes en [la lista de aceptación](sprint-1.md). Las imágenes de prueba son sintéticas y no se incluyen en Git.
+Las pruebas físicas en Safari/iPhone, Android, cambios de orientación y proyector quedan pendientes en [la lista de aceptación](sprint-1.md). Las imágenes de prueba son sintéticas y no se incluyen en Git.
+
+## Instalación Cloudflare, 13 de septiembre de 2026
+
+- Worker `photown` desplegado en `https://photown.photown.workers.dev`.
+- Bucket existente `photown-photos`, jurisdicción `eu`, enlazado como `PHOTOS`.
+- Verificado: r2.dev deshabilitado y sin dominios públicos del bucket.
+- Invitación y firma de sesión de producción configuradas como secretos independientes del entorno local. Sus valores no se incluyen en Git.
+- Cloudflare confirma la ruta workers.dev habilitada y el DNS resuelve.
+- Pendiente: comprobación completa de HTTPS/envío desde internet. En la comprobación inicial falló la negociación TLS, antes de llegar a la aplicación. No se ha confirmado aún la causa ni la recuperación; no se debe dar la instalación por validada para el piloto.
 
 Documentación oficial consultada para la implementación:
 
