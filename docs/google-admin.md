@@ -28,6 +28,7 @@ El backend verifica firma, emisor, audiencia, caducidad, nonce, email verificado
 - Abrir/cerrar grupos. Cerrar el grupo impide inmediatamente el acceso de sus participantes.
 - Revisar fotografías, aprobarlas, ocultarlas o eliminarlas definitivamente.
 - Asignar confianza o bloquear a un participante dentro de un grupo.
+- Recuperar fotografías tras perder una cookie: la persona entra de nuevo, copia «Mi identidad» en Mis fotos y la comunica al administrador. En Gestionar grupo, el administrador contrasta la identidad anterior con las fotografías (muestran su identificador), selecciona el origen e introduce la nueva identidad. Ambas deben pertenecer al grupo. La confirmación reasigna las fotos pendientes/publicadas/ocultas conservando sus estados y descripciones; bloquea el origen y conserva los permisos propios del destino. No restaura fotos borradas ni transfiere envíos incompletos u otros grupos. El proceso es repetible sin duplicar imágenes; se modifica propiedad, no los archivos de R2.
 
 Los dos administradores tienen acceso a todos los grupos de esta instalación. No hay roles administrativos por grupo todavía. Las listas se orientan a grupos pequeños; la lista de participantes del panel muestra hasta 200 por grupo.
 
@@ -45,6 +46,6 @@ El participante puede borrar sus fotos del grupo actual, incluso si están pendi
 
 Se conserva un registro mínimo de identificador/ruta, sin propietario, descripción ni hash de imagen, para impedir que un reenvío resucite el archivo y para retirar escrituras tardías. El borrado no puede retirar copias que otra persona ya haya visto/capturado ni alterar de inmediato las retenciones de recuperación del proveedor. No hay una papelera recuperable desde PhoTown.
 
-Las fotografías del sprint 1 no tenían publisher y no se atribuyen automáticamente a ningún navegador. Cada nueva participación genera una identidad persistente con cookie HttpOnly; borrarla pierde el acceso a las fotos propias. No se recupera mediante Google ni correo del participante.
+Las fotografías del sprint 1 no tenían publisher y no se atribuyen automáticamente a ningún navegador. Cada nueva participación genera una identidad persistente con cookie HttpOnly; borrarla pierde el acceso automático a las fotos propias. El administrador puede reasignarlas mediante el procedimiento anterior, tras comprobar con la persona su autoría. No hay recuperación automática mediante Google ni correo del participante.
 
 Las cookies pertenecen a cada dominio. Al cambiar desde workers.dev hay que entrar de nuevo con la invitación; las fotos hechas desde la dirección anterior siguen asociadas a la identidad de ese navegador en la dirección anterior. No se transfieren automáticamente entre dominios.

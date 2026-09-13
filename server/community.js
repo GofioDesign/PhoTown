@@ -150,6 +150,18 @@ async function adminRoutes(request, env, db, url) {
     }
     return json({ ok: true });
   }
+  const recovery = /^\/api\/admin\/groups\/([a-z0-9-]+)\/recover-identity$/.exec(url.pathname);
+  if (recovery && request.method === 'POST') {
+    const { source, target } = await bodyJSON(request);
+    if (!uuid.test(source || '') || !uuid.test(target || '') || source === target) throw new HttpError(400, 'Selecciona dos identidades diferentes.');
+    const members = await db.prepare('SELECT publisher_id FROM memberships WHERE group_id=? AND publisher_id IN (?,?)').bind(recovery[1], source, target).all();
+    if (members.results.length !== 2) throw new HttpError(400, 'Las dos identidades deben pertenecer a este grupo.');
+    const result = await db.batch([
+      db.prepare("UPDATE memberships SET status='BLOCKED' WHERE group_id=? AND publisher_id=?").bind(recovery[1], source),
+      db.prepare("UPDATE photos SET publisher_id=? WHERE group_id=? AND publisher_id=? AND status IN ('pending','published','hidden')").bind(target, recovery[1], source)
+    ]);
+    return json({ transferred: result[1].meta.changes });
+  }
   const memberAction = /^\/api\/admin\/groups\/([a-z0-9-]+)\/publishers\/([a-f0-9-]+)$/.exec(url.pathname);
   if (memberAction && request.method === 'POST') {
     const body = await bodyJSON(request);
@@ -170,7 +182,7 @@ export async function communityRoute(request, env) {
   if (path.startsWith('/api/admin/')) return adminRoutes(request, env, db, url);
   if (path === '/api/enter' && request.method === 'POST') return enter(request, env, db);
   const user = await participant(request, env, db);
-  if (path === '/api/session' && request.method === 'GET') return json({ authenticated: Boolean(user), group: user ? { id: user.group_id, name: user.name } : null, status: user?.status });
+  if (path === '/api/session' && request.method === 'GET') return json({ authenticated: Boolean(user), group: user ? { id: user.group_id, name: user.name } : null, status: user?.status, identity: user?.publisher_id });
   const imageMatch = /^\/api\/images\/([a-f0-9-]+)$/.exec(path);
   if (imageMatch && request.method === 'GET') {
     const photo = await db.prepare("SELECT * FROM photos WHERE id=? AND status IN ('pending','published','hidden')").bind(imageMatch[1]).first();

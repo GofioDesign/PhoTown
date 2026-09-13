@@ -12,6 +12,7 @@ button:disabled { opacity: .45; cursor: default; }
 button.primary { background: #eeeeea; color: #111; border-color: #eeeeea; }
 :focus-visible { outline: 2px solid #fff; outline-offset: 5px; }
 input { width: 100%; border: 1px solid #777; padding: 15px; background: #1b1b1b; color: #fff; min-height: 48px; }
+input[type="checkbox"] { width: 24px; height: 24px; min-height: 24px; padding: 0; vertical-align: middle; margin-right: 8px; }
 label { display: block; margin: 28px 0 10px; font-size: .875rem; }
 p { line-height: 1.65; }
 .entry { min-height: 100svh; max-width: 580px; padding: 48px 28px; margin: auto; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; }

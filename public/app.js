@@ -194,6 +194,20 @@ async function confirmDeletion() {
 async function gallery(version, mine) {
   shell(`<section class="gallery-shell">${topbar(mine ? 'MIS FOTOS' : 'MURO COLECTIVO')}<h1>${mine ? 'Mis fotos' : 'Muro colectivo'}</h1><p class="note">${escape(groupName)}${mine ? ' · Estas fotos pertenecen a tu identidad en este navegador. Si borras sus cookies, perderás el acceso a ellas.' : ''}</p><p id="message" class="message" role="status">Cargando fotografías…</p><div id="photos" class="photo-grid"></div><button id="more" hidden>Cargar más fotografías</button></section>`);
   const container = root.querySelector('#photos'), more = root.querySelector('#more');
+  if (mine) {
+    const identityBox = document.createElement('div');
+    identityBox.innerHTML = '<p>Si pierdes el acceso, el administrador puede ayudarte a recuperar tus fotos.</p><label>Mi identidad<input readonly autocomplete="off"></label><button type="button">Copiar mi identidad</button><p role="status"></p>';
+    container.before(identityBox);
+    try {
+      const session = await api('/api/session');
+      if (version !== renderVersion) return;
+      identityBox.querySelector('input').value = session.identity || '';
+      identityBox.querySelector('button').onclick = async () => {
+        try { await navigator.clipboard.writeText(session.identity); identityBox.querySelector('[role=status]').textContent = 'Identidad copiada.'; }
+        catch { identityBox.querySelector('input').select(); identityBox.querySelector('[role=status]').textContent = 'Copia la identidad seleccionada.'; }
+      };
+    } catch (error) { identityBox.querySelector('[role=status]').textContent = error.message; }
+  }
   let cursor, loading = false;
   const load = async () => {
     if (loading) return;

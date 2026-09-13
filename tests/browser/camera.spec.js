@@ -161,6 +161,22 @@ test('admin can create group, rotate invitation, moderate and block participants
   await page.getByRole('button', { name: 'Guardar estado' }).click();
   await expect(page.getByText('Estado guardado.', { exact: true })).toBeVisible();
   await page.goto('/wall'); await expect(page.locator('.photo-card')).toHaveCount(1);
+  const oldIdentity = (await (await page.request.get('/api/session')).json()).identity;
+  await context.clearCookies({ name: 'photown_publisher' }); await context.clearCookies({ name: 'photown_group' });
+  await page.goto(invitationLink); await page.getByRole('button', { name: 'Entrar en PhoTown' }).click();
+  await expect(page).toHaveURL(/\/camera$/);
+  await page.goto('/my-photos');
+  await expect(page.getByLabel('Mi identidad', { exact: true })).toHaveValue(/[a-f0-9-]{36}/);
+  const newIdentity = await page.getByLabel('Mi identidad', { exact: true }).inputValue();
+  expect(newIdentity).not.toBe(oldIdentity); expect(newIdentity).not.toBe('');
+  await page.goto('/admin');
+  await page.locator('.admin-row').filter({ has: page.getByRole('heading', { name, exact: true }) }).getByRole('button', { name: 'Gestionar grupo' }).click();
+  await page.getByLabel('Identidad anterior', { exact: true }).selectOption(oldIdentity);
+  await page.getByLabel('Nueva identidad', { exact: true }).fill(newIdentity);
+  await page.getByRole('checkbox').check();
+  await page.getByRole('button', { name: 'Reasignar fotografías', exact: true }).click();
+  await expect(page.getByText('1 fotografías reasignadas.', { exact: false })).toBeVisible();
+  await page.goto('/my-photos'); await expect(page.locator('.photo-card')).toHaveCount(1);
 });
 test('main screens have no automated WCAG A/AA violations', async ({ page }) => {
   for (const path of ['/', '/enter', '/admin']) {

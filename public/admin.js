@@ -75,6 +75,7 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
             catch (error) { card.querySelector('[role=status]').textContent = error.message; card.querySelectorAll('button').forEach(b => b.disabled = false); }
           };
           grid.append(card);
+          const owner = document.createElement('p'); owner.className = 'invitation'; owner.textContent = `Identidad: ${photo.publisher_id}`; card.append(owner);
         }
         cursor = response.next; more.hidden = !cursor;
         target.querySelector('.detail-message').textContent = grid.children.length ? '' : 'No hay fotografías para revisar.';
@@ -86,6 +87,22 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
     try {
       const response = await api(`/api/admin/groups/${group.id}/publishers`); if (!valid()) return;
       const list = target.querySelector('.members');
+      const recovery = document.createElement('form');
+      recovery.innerHTML = '<h3>Recuperar fotografías de una identidad anterior</h3><p>La persona debe entrar de nuevo y comunicar su identidad, visible en Mis fotos. Comprueba con ella cuáles eran sus fotos antes de reasignarlas.</p><label for="recovery-source">Identidad anterior</label><select id="recovery-source" name="source" required><option value="">Selecciona la identidad anterior</option></select><label>Nueva identidad<input name="target" required placeholder="Identidad completa de Mis fotos" autocomplete="off"></label><label><input type="checkbox" required> He comprobado que ambas identidades pertenecen a la misma persona. La anterior quedará bloqueada en este grupo.</label><button type="submit">Reasignar fotografías</button><p role="status"></p>';
+      for (const member of response.publishers) {
+        const option = document.createElement('option'); option.value = member.publisher_id;
+        option.textContent = `${member.publisher_id} · último acceso ${new Date(member.last_seen).toLocaleString('es')}`;
+        recovery.querySelector('select').append(option);
+      }
+      recovery.onsubmit = async event => {
+        event.preventDefault(); const button = recovery.querySelector('button'); button.disabled = true;
+        try {
+          const result = await post(`/api/admin/groups/${group.id}/recover-identity`, { source: recovery.elements.source.value, target: recovery.elements.target.value.trim() });
+          await details(group); report(`${result.transferred} fotografías reasignadas. La identidad anterior queda bloqueada en este grupo.`);
+        } catch (error) { recovery.querySelector('[role=status]').textContent = error.message; }
+        finally { button.disabled = false; }
+      };
+      list.before(recovery);
       if (!response.publishers.length) list.textContent = 'Todavía no hay participantes.';
       for (const member of response.publishers) {
         const row = document.createElement('div'); row.className = 'member-row';

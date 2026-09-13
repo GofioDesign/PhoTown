@@ -103,6 +103,31 @@ test('failed R2 deletion hides image immediately and scheduled cleanup removes b
   assert.equal((await call(e, `/api/images/${id}`, 'GET', a)).status, 404);
   e.PHOTOS.delete = remove; await cleanupDeleted(e); assert.equal(e.objects.size, 0);
 });
+
+test('admin identity recovery transfers only this group and preserves moderation and deleted photos', async () => {
+  const e = env(), old = await join(e), fresh = await join(e), admin = await adminCookie(e);
+  const source = (await (await call(e, '/api/session', 'GET', old)).json()).identity;
+  const target = (await (await call(e, '/api/session', 'GET', fresh)).json()).identity;
+  const id = crypto.randomUUID(), removed = crypto.randomUUID();
+  await upload(e, old, id); await upload(e, old, removed);
+  await call(e, `/api/my-photos/${removed}`, 'DELETE', old);
+  const group = await (await call(e, '/api/admin/groups', 'POST', admin, { name: 'Separate' })).json();
+  const other = await join(e, group.code, old), otherPhoto = crypto.randomUUID(); await upload(e, other, otherPhoto);
+  const path = '/api/admin/groups/default/recover-identity';
+  assert.equal((await call(e, path, 'POST', fresh, { source, target })).status, 401);
+  assert.equal((await call(e, path, 'POST', admin, { source, target: source })).status, 400);
+  assert.equal((await call(e, path, 'POST', admin, { source, target: crypto.randomUUID() })).status, 400);
+  assert.equal((await call(e, `/api/admin/groups/${group.id}/recover-identity`, 'POST', admin, { source, target })).status, 400);
+  assert.deepEqual(await (await call(e, path, 'POST', admin, { source, target })).json(), { transferred: 1 });
+  assert.equal((await call(e, `/api/images/${id}`, 'GET', old)).status, 404);
+  const photos = (await (await call(e, '/api/my-photos', 'GET', fresh)).json()).photos;
+  assert.equal(photos[0].id, id); assert.equal(photos[0].status, 'pending');
+  assert.equal((await call(e, `/api/images/${removed}`, 'GET', fresh)).status, 404);
+  assert.equal((await call(e, `/api/images/${otherPhoto}`, 'GET', other)).status, 200);
+  assert.equal((await upload(e, old)).status, 403);
+  assert.deepEqual(await (await call(e, path, 'POST', admin, { source, target })).json(), { transferred: 0 });
+  assert.equal((await call(e, `/api/my-photos/${id}`, 'DELETE', fresh)).status, 200);
+});
 test('delete while upload is storing cannot republish the image', async () => {
   const e = env(), a = await join(e), id = crypto.randomUUID();
   const put = e.PHOTOS.put;
