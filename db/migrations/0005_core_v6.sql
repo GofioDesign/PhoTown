@@ -34,6 +34,17 @@ CREATE TABLE global_roles (
   PRIMARY KEY (user_id,role)
 );
 
+CREATE TABLE group_role_assignments (
+  group_id TEXT NOT NULL REFERENCES groups(id),
+  email TEXT NOT NULL,
+  role TEXT NOT NULL CHECK(role IN ('moderator','admin')),
+  assigned_by_user_id TEXT NOT NULL REFERENCES users(id),
+  claimed_user_id TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (group_id,email)
+);
+CREATE INDEX group_role_assignments_email ON group_role_assignments(email,group_id);
+
 CREATE TABLE group_memberships (
   user_id TEXT NOT NULL REFERENCES users(id),
   group_id TEXT NOT NULL REFERENCES groups(id),
