@@ -4,6 +4,7 @@ import { signToken } from '../../server/tokens.js';
 import AxeBuilder from '@axe-core/playwright';
 
 const code = process.env.PHOTOWN_TEST_CODE;
+const adminEmail = process.env.PHOTOWN_TEST_ADMIN_EMAIL || 'admin@example.com';
 test.beforeEach(async ({ context }) => {
   // Distinct simulated clients for the real local rate limiter.
   await context.setExtraHTTPHeaders({ 'CF-Connecting-IP': `2001:db8::${Math.floor(Math.random()*65535).toString(16)}` });
@@ -151,7 +152,7 @@ test('personal fullscreen supports ALT, original download and scoped permanent d
 test('admin can create group, rotate invitation, moderate and block participants using actual D1', async ({ page, context }) => {
   // Local-only fixture. No test-only authentication endpoint is shipped.
   const secret = /^SESSION_SECRET=(.+)$/m.exec(readFileSync('.dev.vars', 'utf8'))[1].trim();
-  const token = await signToken({ SESSION_SECRET: secret }, { sub: 'local-test-admin-' + crypto.randomUUID(), email: 'gofiodesign@gmail.com' }, 'admin', 600);
+  const token = await signToken({ SESSION_SECRET: secret }, { sub: 'local-test-admin-' + crypto.randomUUID(), email: adminEmail }, 'admin', 600);
   await context.addCookies([{ name: 'photown_admin', value: token, domain: 'localhost', path: '/', httpOnly: true, sameSite: 'Strict' }]);
   await page.goto('/admin');
   await expect(page.getByRole('heading', { name: 'Administración de grupos' })).toBeVisible();
@@ -216,7 +217,7 @@ test('main screens have no automated WCAG A/AA violations', async ({ page }) => 
 
 test('multiple groups, personal archive, alias, ALT, handedness and retry preserve one capture origin', async ({ page, context }) => {
   const secret = /^SESSION_SECRET=(.+)$/m.exec(readFileSync('.dev.vars', 'utf8'))[1].trim();
-  const token = await signToken({ SESSION_SECRET: secret }, { sub: 'local-test-admin-' + crypto.randomUUID(), email: 'gofiodesign@gmail.com' }, 'admin', 600);
+  const token = await signToken({ SESSION_SECRET: secret }, { sub: 'local-test-admin-' + crypto.randomUUID(), email: adminEmail }, 'admin', 600);
   await context.addCookies([{ name:'photown_admin', value:token, domain:'localhost', path:'/', httpOnly:true, sameSite:'Strict' }]);
   const post = (path, data) => page.request.post(path, { headers:{Origin:'http://localhost:8787'}, data });
   const firstName = 'Destino A '+Date.now(), secondName = 'Destino B '+Date.now();
@@ -361,7 +362,7 @@ test('waitlist handles validation, failure and persistence without granting acce
   expect((await (await page.request.get('/api/session')).json()).authenticated).toBe(false);
   expect((await page.request.get('/api/admin/waitlist')).status()).toBe(401);
   const secret = /^SESSION_SECRET=(.+)$/m.exec(readFileSync('.dev.vars', 'utf8'))[1].trim();
-  const token = await signToken({SESSION_SECRET:secret},{sub:'local-test-admin-'+crypto.randomUUID(),email:'gofiodesign@gmail.com'},'admin',600);
+  const token = await signToken({SESSION_SECRET:secret},{sub:'local-test-admin-'+crypto.randomUUID(),email:adminEmail},'admin',600);
   await context.addCookies([{name:'photown_admin',value:token,domain:'localhost',path:'/',httpOnly:true,sameSite:'Strict'}]);
   await page.goto('/admin'); await page.getByRole('button',{name:'Lista de espera',exact:true}).click();
   const row = page.locator('.waitlist-table article').filter({hasText:email}); await expect(row).toBeVisible();
@@ -397,7 +398,7 @@ test('YO profile photo, direct card controls and administrator classroom wall', 
   await page.screenshot({path:testInfo.outputPath('compact-selection.png')});
   await page.getByRole('button',{name:'Cancelar selección'}).click();
   const secret = /^SESSION_SECRET=(.+)$/m.exec(readFileSync('.dev.vars','utf8'))[1].trim();
-  const token = await signToken({SESSION_SECRET:secret},{sub:'local-class-'+crypto.randomUUID(),email:'gofiodesign@gmail.com'},'admin',600);
+  const token = await signToken({SESSION_SECRET:secret},{sub:'local-class-'+crypto.randomUUID(),email:adminEmail},'admin',600);
   await context.addCookies([{name:'photown_admin',value:token,domain:'localhost',path:'/',httpOnly:true,sameSite:'Strict'}]);
   const photo = (await (await page.request.get('/api/library')).json()).photos[0];
   await page.request.post(`/api/admin/photos/${photo.id}/approve`,{headers:{Origin:'http://localhost:8787'}});
