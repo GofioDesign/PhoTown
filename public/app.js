@@ -152,6 +152,8 @@ async function camera(version) {
     try {
       const captured = await capture(video);
       if (version !== renderVersion) return;
+      captured.groupId = groupId;
+      captured.groupName = groupName;
       clearShot();
       shot = captured;
       shotUrl = URL.createObjectURL(shot.blob);
@@ -188,16 +190,10 @@ function preview() {
   if (!shot) { navigate('/camera', true); return; }
   shell(`<section class="camera-shell capture-preview">${topbar()}<h1 class="sr-only">Vista previa de tu fotografía</h1><div class="viewfinder"><img class="photograph" id="photo" alt="Tu fotografía en blanco y negro"></div><div class="controls"><button id="again">Repetir</button><button class="primary" id="publish">Enviar</button></div><p id="message" class="message" role="status"></p><p id="connection" class="connection" role="status"></p></section>`);
   document.querySelector('#photo').src = shotUrl;
-  const destinations = document.createElement('fieldset'); destinations.className = 'destinations';
-  destinations.innerHTML = '<legend>Publicar en</legend>';
-  destinations.hidden = memberGroups.filter(group => group.status !== 'BLOCKED').length <= 1;
-  const choices = shot.deliveries || memberGroups.filter(group => group.status !== 'BLOCKED');
-  for (const group of choices) {
-    const label = document.createElement('label'), input = document.createElement('input'); input.type = 'checkbox'; input.value = group.id;
-    input.checked = Boolean(shot.deliveries) || group.id === groupId || choices.length === 1; input.disabled = Boolean(shot.deliveries);
-    label.append(input, document.createTextNode(group.name)); destinations.append(label);
-  }
-  root.querySelector('.controls').before(destinations);
+  const destination = document.createElement('p');
+  destination.className = 'destination-context';
+  destination.textContent = `Grupo de origen: ${shot.groupName || groupName}`;
+  root.querySelector('.controls').before(destination);
   connection();
   document.querySelector('#again').addEventListener('click', () => {
     if (busy) return;
@@ -206,21 +202,13 @@ function preview() {
   });
   document.querySelector('#publish').addEventListener('click', async () => {
     if (busy || !shot) return;
-    if (!shot.deliveries) {
-      const selected = [...destinations.querySelectorAll('input:checked')];
-      if (!selected.length) { message('Selecciona al menos un grupo.'); return; }
-      shot.deliveries = selected.map((input, index) => ({ id: input.value, name: memberGroups.find(group => group.id === input.value)?.name || '', photoId: index === 0 ? shot.id : crypto.randomUUID(), result: null }));
-    }
-    destinations.querySelectorAll('input').forEach(input => input.disabled = true);
     busy = true;
     const buttons = [...root.querySelectorAll('button')];
     buttons.forEach(button => button.disabled = true);
     message('Enviando fotografía…');
     try {
-      for (const destination of shot.deliveries) {
-        if (!destination.result) destination.result = await api('/api/photos', { method: 'POST', headers: { 'Content-Type': 'image/webp', 'Idempotency-Key': destination.photoId, 'X-Photown-Group': destination.id }, body: shot.blob });
-      }
-      const pending = shot.deliveries.some(destination => destination.result.status === 'pending');
+      const result = await api('/api/photos', { method: 'POST', headers: { 'Content-Type': 'image/webp', 'Idempotency-Key': shot.id, 'X-Photown-Group': shot.groupId || groupId }, body: shot.blob });
+      const pending = result.status === 'pending';
       clearShot();
       busy = false;
       navigate('/wall', true);
@@ -233,8 +221,7 @@ function preview() {
         authenticated = false;
         entryForm(true);
       } else {
-        const sent = shot.deliveries.filter(destination => destination.result).map(destination => destination.name);
-        message(`${error.message}\n${sent.length ? 'Ya enviada a: ' + sent.join(', ') + '. ' : ''}Tu fotografía sigue aquí. Puedes volver a enviarla; solo se reintentarán los grupos pendientes.`);
+        message(`${error.message}\nTu fotografía sigue aquí y puedes volver a enviarla al mismo grupo.`);
         document.querySelector('#publish').textContent = 'Reintentar envío';
       }
     } finally { busy = false; buttons.forEach(button => button.disabled = false); }
