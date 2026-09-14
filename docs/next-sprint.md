@@ -1,5 +1,7 @@
 # Próximos sprints
 
+El siguiente trabajo de identidad, equivalencia Gmail, ownership y vinculación OAuth se planifica en [sprint-2-v6-identity-ownership.md](sprint-2-v6-identity-ownership.md).
+
 El rediseño YO — cámara — grupo activo del Sprint 2 se describe en [sprint-2.md](sprint-2.md).
 
 ## Sprint 3 propuesto: cámara móvil y accesibilidad
