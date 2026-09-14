@@ -33,7 +33,10 @@ async function api(path, options = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 45000);
   try {
-    const response = await fetch(path, { ...options, credentials: 'same-origin', signal: controller.signal });
+    const headers = new Headers(options.headers || {});
+    const adminContext = new URLSearchParams(location.search).get('context');
+    if (path.startsWith('/api/admin/') && adminContext && adminContext !== 'superadmin') headers.set('X-Photown-Admin-Group', adminContext);
+    const response = await fetch(path, { ...options, headers, credentials: 'same-origin', signal: controller.signal });
     let data;
     try { data = await response.json(); }
     catch { throw new Error('PhoTown no ha podido confirmar la operación. Vuelve a intentarlo.'); }

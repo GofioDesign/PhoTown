@@ -12,10 +12,34 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
     shell(`<section class="entry"><a class="brand" href="/" data-route="/">PHOTOWN</a><h1>Administración</h1><p>Gestiona grupos, invitaciones y fotografías.</p>${session.configured ? '<a class="button" href="/api/admin/google/start">Entrar con Google</a>' : '<p role="status">El acceso con Google está pendiente de configuración por el equipo de PhoTown.</p>'}${failed ? '<p role="alert">No se pudo autorizar esta cuenta. Utiliza una cuenta administradora o vuelve a intentar.</p>' : ''}</section>`);
     return;
   }
-  shell(`<section class="gallery-shell"><a class="brand" href="/" data-route="/">PHOTOWN</a><h1>Administración de grupos</h1><p>${escape(session.email)}</p><button id="logout">Cerrar sesión de administración</button><form id="create-group"><label for="group-name">Nombre del nuevo grupo</label><input id="group-name" maxlength="80" required><label for="group-admin-email">Correo OAuth del admin inicial</label><input id="group-admin-email" name="admin_email" type="email" maxlength="254" required value="${escape(session.email)}"><button class="primary" type="submit">Crear grupo</button></form><p id="admin-message" role="status"></p><div id="new-invitation"></div><div id="groups" class="group-grid"></div><section id="group-detail" aria-label="Contenido del grupo"></section></section>`);
-  const waiting = document.createElement('section');
-  waiting.innerHTML = '<button id="show-waitlist" aria-expanded="false" aria-controls="waitlist-admin">Lista de espera</button><div id="waitlist-admin" hidden><h2>Personas en lista de espera</h2><p>Solicitudes guardadas sin envío de correos ni acceso automático.</p><div class="waitlist-table"></div><button id="more-waitlist" hidden>Cargar más solicitudes</button><p role="status"></p></div>';
-  root.querySelector('#create-group').before(waiting);
+  const requestedContext = new URLSearchParams(location.search).get('context');
+  const contexts = Array.isArray(session.contexts) ? session.contexts : [];
+  let context = contexts.find(item => item.key === requestedContext);
+  if (!context && contexts.length === 1) context = contexts[0];
+  if (!context && contexts.length > 1) {
+    shell(`<section class="entry"><a class="brand" href="/" data-route="/">PHOTOWN</a><h1>¿Con qué rol quieres entrar?</h1><p>${escape(session.email)}</p><div class="role-options"></div><button id="logout">Cerrar sesión de administración</button></section>`);
+    const options = root.querySelector('.role-options');
+    for (const item of contexts) {
+      const link = document.createElement('a'); link.className = 'button'; link.textContent = item.label;
+      link.href = '/admin?context=' + encodeURIComponent(item.key); options.append(link);
+    }
+    root.querySelector('#logout').onclick = async () => { await api('/api/admin/logout', { method: 'POST' }); location.href = '/admin'; };
+    return;
+  }
+  if (!context) { shell('<section class="entry"><h1>Administración</h1><p role="alert">Esta cuenta no tiene ningún rol administrativo activo.</p></section>'); return; }
+  const rawApi = api;
+  if (context.type === 'group') api = (path, options = {}) => {
+    const headers = new Headers(options.headers || {}); headers.set('X-Photown-Admin-Group', context.group_id);
+    return rawApi(path, { ...options, headers });
+  };
+  const isSuperadmin = context.type === 'superadmin';
+  const createGroup = isSuperadmin ? `<form id="create-group"><label for="group-name">Nombre del nuevo grupo</label><input id="group-name" maxlength="80" required><label for="group-admin-email">Correo OAuth del admin inicial</label><input id="group-admin-email" name="admin_email" type="email" maxlength="254" required value="${escape(session.email)}"><button class="primary" type="submit">Crear grupo</button></form>` : '';
+  shell(`<section class="gallery-shell"><a class="brand" href="/" data-route="/">PHOTOWN</a><h1>${isSuperadmin ? 'Administración global' : escape(context.label)}</h1><p>${escape(session.email)}</p>${contexts.length > 1 ? '<a class="button" href="/admin">Cambiar rol</a>' : ''}<button id="logout">Cerrar sesión de administración</button>${createGroup}<p id="admin-message" role="status"></p><div id="new-invitation"></div><div id="groups" class="group-grid"></div><section id="group-detail" aria-label="Contenido del grupo"></section></section>`);
+  const waiting = isSuperadmin ? document.createElement('section') : null;
+  if (waiting) {
+    waiting.innerHTML = '<button id="show-waitlist" aria-expanded="false" aria-controls="waitlist-admin">Lista de espera</button><div id="waitlist-admin" hidden><h2>Personas en lista de espera</h2><p>Solicitudes guardadas sin envío de correos ni acceso automático.</p><div class="waitlist-table"></div><button id="more-waitlist" hidden>Cargar más solicitudes</button><p role="status"></p></div>';
+    root.querySelector('#create-group').before(waiting);
+  }
   let waitCursor, waitLoading = false, waitLoaded = false;
   const loadWaiting = async () => {
     if (waitLoading) return; waitLoading = true;
@@ -45,8 +69,10 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
     } catch (error) { report.textContent = error.message; more.hidden = false; more.textContent = 'Reintentar carga'; }
     finally { waitLoading = false; more.disabled = false; }
   };
-  waiting.querySelector('#show-waitlist').onclick = () => { const panel = waiting.querySelector('#waitlist-admin'); panel.hidden = !panel.hidden; waiting.querySelector('#show-waitlist').setAttribute('aria-expanded', String(!panel.hidden)); if (!panel.hidden && !waitLoaded) loadWaiting(); };
-  waiting.querySelector('#more-waitlist').onclick = loadWaiting;
+  if (waiting) {
+    waiting.querySelector('#show-waitlist').onclick = () => { const panel = waiting.querySelector('#waitlist-admin'); panel.hidden = !panel.hidden; waiting.querySelector('#show-waitlist').setAttribute('aria-expanded', String(!panel.hidden)); if (!panel.hidden && !waitLoaded) loadWaiting(); };
+    waiting.querySelector('#more-waitlist').onclick = loadWaiting;
+  }
   const report = text => { if (current()) root.querySelector('#admin-message').textContent = text; };
   const post = (path, data = {}) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   function invitation(target, code) {
@@ -67,7 +93,11 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
     if (!response.groups.length) { list.textContent = 'Todavía no hay grupos. Crea el primero.'; return; }
     for (const group of response.groups) {
       const card = document.createElement('article'); card.className = 'admin-row';
-      card.innerHTML = `<h2>${escape(group.name)}</h2><p>${group.active ? 'Grupo abierto' : 'Grupo cerrado'}</p><a class="button" href="/admin/wall?group=${encodeURIComponent(group.id)}">Muro</a><button data-action="manage">Gestionar grupo</button><button data-action="invitation">Generar nueva invitación</button><button data-action="active">${group.active ? 'Cerrar grupo' : 'Abrir grupo'}</button><div class="invitation-result"></div><p class="group-status" role="status"></p>`;
+      const scopedContext = context.type === 'group' ? `&context=${encodeURIComponent(context.key)}` : '';
+      const canManage = context.type !== 'group' || context.role === 'admin';
+      const manageControls = canManage ? `<button data-action="manage">Gestionar grupo</button><button data-action="invitation">Generar nueva invitación</button><button data-action="active">${group.active ? 'Cerrar grupo' : 'Abrir grupo'}</button>` : '';
+      card.innerHTML = `<h2>${escape(group.name)}</h2><p>${group.active ? 'Grupo abierto' : 'Grupo cerrado'}</p><a class="button" href="/admin/wall?group=${encodeURIComponent(group.id)}${scopedContext}">Muro</a>${manageControls}<div class="invitation-result"></div><p class="group-status" role="status"></p>`;
+      if (!canManage) { list.append(card); continue; }
       card.querySelector('[data-action=manage]').onclick = () => details(group);
       card.querySelector('[data-action=invitation]').onclick = async event => {
         event.target.disabled = true;
@@ -176,7 +206,7 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
       }
     } catch (error) { if (valid()) target.querySelector('.members').textContent = error.message; }
   }
-  root.querySelector('#create-group').onsubmit = async event => {
+  if (isSuperadmin) root.querySelector('#create-group').onsubmit = async event => {
     event.preventDefault(); const button = event.target.querySelector('button'); button.disabled = true;
     try { const result = await post('/api/admin/groups', { name: event.target.querySelector('#group-name').value, admin_email: event.target.elements.admin_email.value }); invitation(root.querySelector('#new-invitation'), result.code); event.target.reset(); event.target.elements.admin_email.value = session.email; await groups(); report('Grupo creado.'); }
     catch (error) { report(error.message); } finally { button.disabled = false; }

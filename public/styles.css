@@ -21,6 +21,7 @@ p { line-height: 1.65; }
 .entry .intro { font-size: 1.125rem; color: #b8b8b5; margin: 0 0 48px; }
 .entry form { width: 100%; max-width: 370px; }
 .entry form button { width: 100%; margin-top: 20px; }
+.role-options { display: grid; gap: 12px; width: 100%; max-width: 420px; margin: 24px 0; }
 .eyebrow { font-size: .75rem; letter-spacing: .16em; text-transform: uppercase; color: #aaa; }
 .note { color: #b8b8b5; font-size: .875rem; max-width: 38ch; }
 .message { line-height: 1.6; white-space: pre-line; }

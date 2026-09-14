@@ -86,6 +86,20 @@ test('classroom wall requires Google administration and lists only published gro
   assert.equal('publisher_id' in page.photos[0], false);
 });
 
+test('a superadmin can choose a group role and that context is enforced by the server', async () => {
+  const e = env(); await join(e); const admin = await adminCookie(e);
+  const created = await (await call(e, '/api/admin/groups', 'POST', admin, { name: 'Second group', admin_email: 'admin@example.com' })).json();
+  const session = await (await call(e, '/api/admin/session', 'GET', admin)).json();
+  assert.equal(session.contexts.some(context => context.type === 'superadmin'), true);
+  assert.equal(session.contexts.some(context => context.type === 'group' && context.group_id === 'default' && context.role === 'admin'), true);
+  const scoped = { 'X-Photown-Admin-Group': 'default' };
+  const groups = await (await call(e, '/api/admin/groups', 'GET', admin, undefined, scoped)).json();
+  assert.deepEqual(groups.groups.map(group => group.id), ['default']);
+  assert.equal((await call(e, '/api/admin/waitlist', 'GET', admin, undefined, scoped)).status, 403);
+  assert.equal((await call(e, '/api/admin/groups', 'POST', admin, { name: 'Forbidden' }, scoped)).status, 403);
+  assert.equal((await call(e, `/api/admin/groups/${created.id}/active`, 'POST', admin, { active: false }, scoped)).status, 403);
+});
+
 test('personal library spans owned groups without exposing other participants or linking independent copies', async () => {
   const e = env(), a = await join(e), admin = await adminCookie(e);
   const group = await (await call(e, '/api/admin/groups', 'POST', admin, { name: 'Second group' })).json();

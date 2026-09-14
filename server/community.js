@@ -131,10 +131,25 @@ export async function cleanupDeleted(env) {
 async function adminRoutes(request, env, db, url) {
   const identity = await adminIdentity(request, env);
   const admin = identity ? await ensureAdminPrincipal(db, identity, adminEmails(env)) : null;
-  if (url.pathname === '/api/admin/session' && request.method === 'GET') return json({ authenticated: Boolean(admin), email: admin?.email, configured: googleReady(env) });
+  const groupContexts = admin ? (await db.prepare(`SELECT g.id,g.name,gm.role FROM group_memberships gm JOIN groups g ON g.id=gm.group_id
+    WHERE gm.user_id=? AND gm.role IN ('admin','moderator') AND gm.state='active' ORDER BY g.name,g.id`).bind(admin.user_id).all()).results : [];
+  const contexts = admin ? [
+    ...(admin.superadmin ? [{ type: 'superadmin', key: 'superadmin', label: 'Superadmin' }] : []),
+    ...groupContexts.map(group => ({ type: 'group', key: group.id, group_id: group.id, group_name: group.name, role: group.role, label: `${group.role === 'admin' ? 'Admin' : 'Moderator'} · ${group.name}` }))
+  ] : [];
+  if (url.pathname === '/api/admin/session' && request.method === 'GET') return json({ authenticated: Boolean(admin), email: admin?.email, configured: googleReady(env), contexts });
   if (!admin) throw new HttpError(401, 'Entra con una cuenta de Google autorizada.');
+  const requestedGroup = request.headers.get('X-Photown-Admin-Group');
+  if (requestedGroup && !/^[a-z0-9-]+$/.test(requestedGroup)) throw new HttpError(400, 'El contexto administrativo no es válido.');
+  const groupContext = requestedGroup ? groupContexts.find(group => group.id === requestedGroup) : null;
+  if (requestedGroup && !groupContext) throw new HttpError(403, 'No tienes ese rol en el grupo seleccionado.');
+  const superadminContext = admin.superadmin && !groupContext;
+  const requireSelectedGroup = groupId => {
+    if (groupContext && groupContext.id !== groupId) throw new HttpError(403, 'Cambia de rol para administrar este grupo.');
+  };
   if (request.method !== 'GET') await rate(env.UPLOAD_LIMITER, `admin:${admin.sub}`);
   if (url.pathname === '/api/admin/waitlist' && request.method === 'GET') {
+    if (!superadminContext) throw new HttpError(403, 'Solo superadmin puede consultar la lista de espera.');
     const before = url.searchParams.get('before');
     let pair;
     if (before) {
@@ -147,19 +162,22 @@ async function adminRoutes(request, env, db, url) {
   }
   const waitlistItem = /^\/api\/admin\/waitlist\/([a-f0-9-]+)$/.exec(url.pathname);
   if (waitlistItem && request.method === 'DELETE') {
+    if (!superadminContext) throw new HttpError(403, 'Solo superadmin puede gestionar la lista de espera.');
     await db.prepare('DELETE FROM waitlist WHERE id=?').bind(waitlistItem[1]).run();
     return json({ deleted: true });
   }
   if (url.pathname === '/api/admin/logout' && request.method === 'POST') return json({ ok: true }, 200, { 'Set-Cookie': cookieHeader(request, 'photown_admin', '', 0) });
   if (url.pathname === '/api/admin/groups') {
     if (request.method === 'GET') {
-      const groups = admin.superadmin
+      const groups = superadminContext
         ? (await db.prepare('SELECT id,name,active,created_at FROM groups ORDER BY created_at DESC,id DESC').all()).results
+        : groupContext
+          ? (await db.prepare('SELECT id,name,active,created_at FROM groups WHERE id=?').bind(groupContext.id).all()).results
         : (await db.prepare("SELECT g.id,g.name,g.active,g.created_at FROM group_memberships gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=? AND gm.role IN ('admin','moderator') AND gm.state='active' ORDER BY g.created_at DESC,g.id DESC").bind(admin.user_id).all()).results;
       return json({ groups });
     }
     if (request.method === 'POST') {
-      if (!admin.superadmin) throw new HttpError(403, 'Solo superadmin puede crear grupos.');
+      if (!superadminContext) throw new HttpError(403, 'Solo superadmin puede crear grupos.');
       const body = await bodyJSON(request);
       if (typeof body?.name !== 'string' || !body.name.trim() || body.name.length > 80) throw new HttpError(400, 'Escribe un nombre de grupo de hasta 80 caracteres.');
       const initialAdmin = typeof body?.admin_email === 'string' && body.admin_email.trim() ? body.admin_email.trim().toLowerCase() : admin.email;
@@ -176,8 +194,9 @@ async function adminRoutes(request, env, db, url) {
   const groupAction = /^\/api\/admin\/groups\/([a-z0-9-]+)\/(invitation|active|photos|publishers|wall|admins)$/.exec(url.pathname);
   if (groupAction) {
     const [, group, action] = groupAction;
+    requireSelectedGroup(group);
     if (!(await db.prepare('SELECT id FROM groups WHERE id=?').bind(group).first())) throw new HttpError(404, 'No se encuentra el grupo.');
-    if (!(action === 'admins' && admin.superadmin)) await requireGroupAuthority(db, admin, group, action === 'wall' ? ['admin','moderator'] : ['admin']);
+    if (!(action === 'admins' && superadminContext)) await requireGroupAuthority(db, admin, group, action === 'wall' ? ['admin','moderator'] : ['admin']);
     if (action === 'admins') {
       if (request.method === 'GET') return json({ admins: (await db.prepare('SELECT email,role,claimed_user_id,created_at FROM group_role_assignments WHERE group_id=? ORDER BY role DESC,email').bind(group).all()).results });
       if (request.method === 'POST') {
@@ -213,6 +232,7 @@ async function adminRoutes(request, env, db, url) {
   if (photoAction && request.method === 'POST') {
     const photo = await db.prepare("SELECT * FROM photos WHERE id=? AND status IN ('pending','published','hidden','deleting')").bind(photoAction[1]).first();
     if (!photo) throw new HttpError(404, 'No se encuentra la fotografía.');
+    requireSelectedGroup(photo.group_id);
     await requireGroupAuthority(db, admin, photo.group_id, ['admin']);
     const action = photoAction[2];
     if (action === 'delete') await erasePhoto(env, db, photo);
@@ -230,6 +250,7 @@ async function adminRoutes(request, env, db, url) {
   }
   const recovery = /^\/api\/admin\/groups\/([a-z0-9-]+)\/recover-identity$/.exec(url.pathname);
   if (recovery && request.method === 'POST') {
+    requireSelectedGroup(recovery[1]);
     await requireGroupAuthority(db, admin, recovery[1], ['admin']);
     const { source, target } = await bodyJSON(request);
     if (!uuid.test(source || '') || !uuid.test(target || '') || source === target) throw new HttpError(400, 'Selecciona dos identidades diferentes.');
@@ -249,6 +270,7 @@ async function adminRoutes(request, env, db, url) {
   }
   const memberAction = /^\/api\/admin\/groups\/([a-z0-9-]+)\/publishers\/([a-f0-9-]+)$/.exec(url.pathname);
   if (memberAction && request.method === 'POST') {
+    requireSelectedGroup(memberAction[1]);
     await requireGroupAuthority(db, admin, memberAction[1], ['admin']);
     const body = await bodyJSON(request);
     if (!['MODERATED','TRUSTED','BLOCKED'].includes(body?.status)) throw new HttpError(400, 'Estado no válido.');
