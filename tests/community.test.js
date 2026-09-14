@@ -155,6 +155,18 @@ test('persistent publisher survives re-entry; distinct browsers have distinct ow
   assert.equal(e.sqlite.prepare('SELECT COUNT(*) n FROM publishers').get().n, 2);
   assert.notEqual(a, b);
 });
+
+test('participant logout clears group access without deleting the persistent identity', async () => {
+  const e = env(), participant = await join(e);
+  const response = await call(e, '/api/logout', 'POST', participant);
+  assert.equal(response.status, 200);
+  const cookies = response.headers.getSetCookie();
+  assert.equal(cookies.some(cookie => cookie.startsWith('photown_group=') && cookie.includes('Max-Age=0')), true);
+  assert.equal(cookies.some(cookie => cookie.startsWith('photown_publisher=')), false);
+  const identityCookie = participant.split(';').find(cookie => cookie.trim().startsWith('photown_publisher='));
+  assert.equal((await call(e, '/api/session', 'GET', identityCookie)).status, 200);
+  assert.equal((await (await call(e, '/api/session', 'GET', identityCookie)).json()).authenticated, false);
+});
 test('pending photos are private; owner can describe and erase permanently; retries cannot resurrect', async () => {
   const e = env(), a = await join(e), b = await join(e), id = crypto.randomUUID();
   assert.equal((await upload(e, a, id)).status, 201);

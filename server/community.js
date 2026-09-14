@@ -293,6 +293,9 @@ export async function communityRoute(request, env) {
   }
   if (path === '/api/admin/google/callback' && request.method === 'GET') return googleCallback(request, env, db);
   if (path.startsWith('/api/admin/')) return adminRoutes(request, env, db, url);
+  if (path === '/api/logout' && request.method === 'POST') {
+    return json({ authenticated: false }, 200, { 'Set-Cookie': cookieHeader(request, 'photown_group', '', 0) });
+  }
   if (path === '/api/enter' && request.method === 'POST') return enter(request, env, db);
   if (path === '/api/waitlist' && request.method === 'POST') {
     await rate(env.ENTRY_LIMITER, 'waitlist:' + await digest(request.headers.get('CF-Connecting-IP') || 'local'));
