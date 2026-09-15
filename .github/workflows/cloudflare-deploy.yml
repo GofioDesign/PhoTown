@@ -43,7 +43,7 @@ jobs:
         run: pnpm exec wrangler d1 migrations list photown-db --remote
 
       - name: Deploy Worker
-        run: pnpm deploy
+        run: pnpm exec wrangler deploy
 
       - name: Verify custom domain responds
         run: |
