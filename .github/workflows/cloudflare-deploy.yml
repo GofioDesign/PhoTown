@@ -1,0 +1,54 @@
+name: Cloudflare deploy
+
+on:
+  push:
+    branches:
+      - sprint-1-v6-core
+    paths:
+      - '.github/workflows/cloudflare-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout Sprint 1 v6
+        uses: actions/checkout@v4
+
+      - name: Use Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Static checks
+        run: pnpm check
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Confirm remote migrations are current
+        run: pnpm exec wrangler d1 migrations list photown-db --remote
+
+      - name: Deploy Worker
+        run: pnpm deploy
+
+      - name: Verify custom domain responds
+        run: |
+          curl --fail --silent --show-error --location --max-time 20 \
+            --output /tmp/photown.html \
+            --write-out 'HTTP %{http_code}\n' \
+            https://photown.gofiodesign.eu/
+          test -s /tmp/photown.html
