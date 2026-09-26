@@ -6,15 +6,30 @@ const paths = {
   group: '<circle cx="12" cy="7" r="3"/><circle cx="4" cy="10" r="2"/><circle cx="20" cy="10" r="2"/><path d="M6 22v-3a6 6 0 0 1 12 0v3ZM1 21v-3a4 4 0 0 1 4-4m18 7v-3a4 4 0 0 0-4-4"/>',
   download: '<path d="M12 2v13m-5-5 5 5 5-5M3 16v6h18v-6"/>',
   trash: '<path d="M3 6h18M9 6V3h6v3M5 6l1 16h12l1-16M10 10v8m4-8v8"/>',
-  close: '<path d="m5 5 14 14M19 5 5 19"/>'
+  close: '<path d="m5 5 14 14M19 5 5 19"/>',
+  bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4ZM10 21h4"/>',
+  target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
+  more: '<circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>'
 };
+export const reactionKinds = [
+  { id: 'like', symbol: '♥', label: 'Me gusta' },
+  { id: 'light', symbol: '☀', label: 'Buena luz' },
+  { id: 'composition', symbol: '▦', label: 'Buena composición' },
+  { id: 'idea', symbol: '✦', label: 'Buena idea' }
+];
 const icon = name => `<svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths[name]}</svg>`;
 
-export function photoUI({ root, api, shell, navigate, state, current, confirmDeletion }) {
+export function photoUI({ root, api, shell, navigate, state, current, confirmDeletion, logout }) {
   let selectionRequested = false;
   const post = (url, body) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   function handedness() { try { return localStorage.getItem('photown-handedness') === 'left' ? 'left' : 'right'; } catch { return 'right'; } }
-  function header() { return '<header class="wall-header"><a class="brand" href="/wall" data-route="/wall">PHOTOWN</a><button data-route="/settings" aria-label="Personalización">…</button></header>'; }
+  function header() {
+    const unread = state().account?.unread || 0, open = (state().challenges || []).filter(c => c.active).length;
+    return `<header class="wall-header"><a class="brand" href="/wall" data-route="/wall">PHOTOWN</a><div class="header-actions">
+      <a href="/challenges" data-route="/challenges" class="header-icon" aria-label="Retos${open ? ', ' + open + ' abiertos' : ''}">${icon('target')}${open ? `<span class="badge" aria-hidden="true">${open}</span>` : ''}</a>
+      <a href="/notifications" data-route="/notifications" class="header-icon" aria-label="Avisos${unread ? ', ' + unread + ' sin leer' : ''}">${icon('bell')}${unread ? `<span class="badge" aria-hidden="true">${unread > 99 ? '99+' : unread}</span>` : ''}</a>
+      <a href="/settings" data-route="/settings" class="header-icon" aria-label="Personalización">${icon('more')}</a></div></header>`;
+  }
   function navigation(mine) {
     const yo = `<a href="/my-photos" data-route="/my-photos" ${mine ? 'aria-current="page"' : ''}>${icon('yo')}<span>YO</span></a>`;
     const group = `<button id="group-menu" ${!mine ? 'aria-current="page"' : ''} aria-label="${escape(state().name)}${state().groups.length > 1 ? ', cambiar de grupo' : ', ver muro'}">${icon('group')}<span>${escape(state().name)}</span></button>`;
@@ -48,26 +63,42 @@ export function photoUI({ root, api, shell, navigate, state, current, confirmDel
     };
   }
   async function settings(version) {
-    shell(`<section class="settings-shell">${header()}<h1>Personalización</h1><a class="button" href="/enter" data-route="/enter">Añadir otro grupo</a><form id="alias-form"><label for="my-alias">Mi alias (opcional)</label><input id="my-alias" maxlength="40" autocomplete="nickname"><p class="note">Firma de tus fotos en ${escape(state().name)}. Déjalo vacío para retirar la atribución.</p><button disabled>Guardar alias</button><p role="status"></p></form><fieldset class="handedness"><legend>Mano preferida</legend><label><input type="radio" name="hand" value="right">Diestro</label><label><input type="radio" name="hand" value="left">Zurdo</label></fieldset><p id="preference-message" role="status"></p><button id="select-photos">Seleccionar varias fotos</button><button data-install>Instalar app</button><details><summary>Recuperar mi acceso</summary><p class="note">Guarda tu identidad. Si pierdes las cookies, el administrador puede ayudarte a recuperar tus fotos.</p><label for="identity">Mi identidad</label><input id="identity" readonly><button id="copy-identity">Copiar mi identidad</button><p id="identity-message" role="status"></p></details><a class="button" href="/wall" data-route="/wall">Volver al muro</a><p id="message" role="alert"></p></section>`);
+    const account = state().account || {};
+    shell(`<section class="settings-shell">${header()}<h1>Personalización</h1>
+      <section class="settings-card" aria-labelledby="account-title"><h2 id="account-title">Mi cuenta</h2><p class="account-email"></p>
+        <label class="switch"><input type="checkbox" id="digest"> Recibir por correo un resumen de novedades (fotos nuevas, reacciones y retos), como mucho uno por hora</label><p id="digest-message" class="note" role="status"></p>
+        <button id="logout">Cerrar sesión en este dispositivo</button>
+        <p class="note">Para unirte a otro grupo, pide a quien lo coordina que te invite con este correo.</p></section>
+      ${state().id ? `<form id="alias-form" class="settings-card"><h2>Mi alias en ${escape(state().name)}</h2><label for="my-alias">Alias (opcional)</label><input id="my-alias" maxlength="40" autocomplete="nickname"><p class="note">Firma de tus fotos en este grupo. Déjalo vacío para retirar la atribución.</p><button disabled>Guardar alias</button><p role="status"></p></form>` : ''}
+      <fieldset class="handedness settings-card"><legend>Mano preferida</legend><label><input type="radio" name="hand" value="right">Diestro</label><label><input type="radio" name="hand" value="left">Zurdo</label></fieldset><p id="preference-message" role="status"></p>
+      <button id="select-photos">Seleccionar varias fotos</button><button data-install>Instalar app</button>
+      <a class="button" href="/wall" data-route="/wall">Volver al muro</a><p id="message" role="alert"></p></section>`);
+    root.querySelector('.account-email').textContent = account.email || 'Cuenta sin correo (acceso antiguo). Entra con tu correo para no perder tus fotos si cambias de dispositivo.';
+    if (!account.email) { const link = document.createElement('a'); link.className = 'button'; link.href = '/login'; link.dataset.route = '/login'; link.textContent = 'Vincular mi correo'; link.onclick = event => { event.preventDefault(); navigate('/login'); }; root.querySelector('.account-email').after(link); }
+    const digest = root.querySelector('#digest'); digest.checked = account.digest !== false; digest.disabled = !account.email;
+    digest.onchange = async () => {
+      digest.disabled = true;
+      try { await post('/api/preferences', { digest: digest.checked }); account.digest = digest.checked; root.querySelector('#digest-message').textContent = digest.checked ? 'Recibirás resúmenes por correo.' : 'No recibirás resúmenes por correo.'; }
+      catch (error) { digest.checked = !digest.checked; root.querySelector('#digest-message').textContent = error.message; }
+      finally { digest.disabled = false; }
+    };
+    root.querySelector('#logout').onclick = async event => { event.target.disabled = true; try { await logout(); } catch (error) { root.querySelector('#message').textContent = error.message; event.target.disabled = false; } };
     root.querySelector(`[name=hand][value=${handedness()}]`).checked = true;
     root.querySelectorAll('[name=hand]').forEach(input => input.onchange = () => {
       try { localStorage.setItem('photown-handedness', input.value); root.querySelector('#preference-message').textContent = 'Preferencia guardada en este dispositivo.'; }
       catch { root.querySelector('#preference-message').textContent = 'El navegador no permite guardar la preferencia.'; }
     });
     root.querySelector('#select-photos').onclick = () => { selectionRequested = true; navigate('/my-photos'); };
+    const form = root.querySelector('#alias-form');
+    if (!form) return;
     try {
       const session = await api('/api/session'); if (!current(version)) return;
-      root.querySelector('#identity').value = session.identity || '';
-      const form = root.querySelector('#alias-form'); form.querySelector('input').value = session.alias || ''; form.querySelector('button').disabled = false;
+      form.querySelector('input').value = session.alias || ''; form.querySelector('button').disabled = false;
       form.onsubmit = async event => {
         event.preventDefault(); const button = form.querySelector('button'); button.disabled = true;
         try { const result = await post('/api/profile', { alias: form.querySelector('input').value }); form.querySelector('input').value = result.alias; form.querySelector('[role=status]').textContent = 'Alias guardado.'; }
         catch (error) { form.querySelector('[role=status]').textContent = error.message; }
         finally { button.disabled = false; }
-      };
-      root.querySelector('#copy-identity').onclick = async () => {
-        try { await navigator.clipboard.writeText(session.identity); root.querySelector('#identity-message').textContent = 'Identidad copiada.'; }
-        catch { root.querySelector('#identity').select(); root.querySelector('#identity-message').textContent = 'Copia la identidad seleccionada.'; }
       };
     } catch (error) { if (current(version)) root.querySelector('#message').textContent = error.message; }
   }
@@ -108,9 +139,12 @@ export function photoUI({ root, api, shell, navigate, state, current, confirmDel
     } catch (error) { if (current(version)) target.textContent = error.message; }
   }
   async function gallery(version, mine, adminGroup = null) {
-    shell(`<section class="wall-shell">${adminGroup ? '<header class="wall-header"><a class="brand" href="/admin" data-route="/admin">PHOTOWN</a><span id="class-name"></span><a class="button" href="/admin" data-route="/admin">Administración</a></header>' : header()}${!adminGroup && state().groups.length > 1 ? '<nav id="group-circles" aria-label="Tus grupos"></nav>' : ''}${mine ? '<section id="my-profile" class="my-profile" aria-label="Mi perfil"></section>' : ''}<h1 class="sr-only">${mine ? 'YO, mis fotografías' : 'Muro de ' + escape(state().name)}</h1><p id="message" class="wall-message" role="status">Cargando fotografías…</p><div id="photos" class="mosaic"></div><button id="more" class="load-more" hidden>Cargar más fotografías</button><div id="navigation">${adminGroup ? '' : navigation(mine)}</div></section>`);
+    shell(`<section class="wall-shell">${adminGroup ? '<header class="wall-header"><a class="brand" href="/admin" data-route="/admin">PHOTOWN</a><span id="class-name"></span><a class="button" href="/admin" data-route="/admin">Administración</a></header>' : header()}${!adminGroup && state().groups.length > 1 ? '<nav id="group-circles" aria-label="Tus grupos"></nav>' : ''}${mine ? '<section id="my-profile" class="my-profile" aria-label="Mi perfil"></section>' : ''}<div id="outbox-bar" class="outbox-bar" role="status" hidden></div><div id="challenge-bar"></div><h1 class="sr-only">${mine ? 'YO, mis fotografías' : 'Muro de ' + escape(state().name)}</h1><p id="message" class="wall-message" role="status">Cargando fotografías…</p><div id="photos" class="mosaic"></div><button id="more" class="load-more" hidden>Cargar más fotografías</button><div id="navigation">${adminGroup ? '' : navigation(mine)}</div></section>`);
     bindGroup();
     if (mine) renderProfile(version);
+    const challengeFilter = new URLSearchParams(location.search).get('challenge');
+    if (!adminGroup) outboxStatus();
+    challengeBar(version, mine, adminGroup, challengeFilter);
     if (!adminGroup && state().groups.length > 1) {
       const circles = root.querySelector('#group-circles');
       for (const group of state().groups) {
@@ -206,13 +240,50 @@ export function photoUI({ root, api, shell, navigate, state, current, confirmDel
         };
         dialog.querySelector('#delete-one').onclick = () => remove([photo], dialog);
       } else dialog.querySelector('.description-text').textContent = photo.description || '';
+      if (photo.challenge_title) { const tag = document.createElement('p'); tag.className = 'viewer-challenge'; tag.textContent = `Reto · ${photo.challenge_title}`; dialog.append(tag); }
+      if (photo.status === 'published') reactionBar(dialog, photo, !mine && !adminGroup);
       if (openAlt) toggleAlt?.click();
+    }
+    // Four reactions with meaning for photography students; counts are shared,
+    // the author only reads them.
+    async function reactionBar(dialog, photo, interactive) {
+      const bar = document.createElement('div'); bar.className = 'viewer-reactions'; bar.setAttribute('role', 'group'); bar.setAttribute('aria-label', 'Reacciones');
+      dialog.append(bar);
+      const paint = summary => {
+        bar.replaceChildren();
+        for (const kind of reactionKinds) {
+          const count = summary.counts[kind.id] || 0, mineToo = summary.mine.includes(kind.id);
+          if (!interactive && !count) continue;
+          const button = document.createElement(interactive ? 'button' : 'span'); button.className = 'reaction';
+          button.innerHTML = `<span aria-hidden="true">${kind.symbol}</span><span class="reaction-count">${count || ''}</span>`;
+          if (interactive) {
+            button.setAttribute('aria-pressed', String(mineToo)); button.setAttribute('aria-label', `${kind.label}${count ? ', ' + count : ''}`);
+            button.onclick = async () => {
+              bar.querySelectorAll('button').forEach(b => b.disabled = true);
+              try { const next = await post(`/api/photos/${photo.id}/reactions`, { kind: kind.id, active: !mineToo }); photo.reactions = Object.values(next.counts).reduce((a, b) => a + b, 0); photo.reacted = next.mine.length; paint(next); updateBadge(photo); }
+              catch (error) { dialog.querySelector('.viewer-message').textContent = error.message; bar.querySelectorAll('button').forEach(b => b.disabled = false); }
+            };
+          } else button.setAttribute('aria-label', `${kind.label}: ${count}`);
+          bar.append(button);
+        }
+        bar.hidden = !bar.children.length;
+      };
+      try { paint(await api(`/api/photos/${photo.id}/reactions`)); } catch { bar.remove(); }
+    }
+    function updateBadge(photo) {
+      const frame = container.querySelector(`[data-id="${photo.id}"]`)?.closest('.photo-frame');
+      if (!frame) return;
+      frame.querySelector('.tile-reactions')?.remove();
+      if (!photo.reactions) return;
+      const badge = document.createElement('span'); badge.className = 'tile-reactions' + (photo.reacted ? ' mine' : '');
+      badge.textContent = `♥ ${photo.reactions}`; badge.setAttribute('aria-label', `${photo.reactions} reacciones`);
+      frame.append(badge);
     }
     function add(photo) {
       photos.set(photo.id, photo);
       const frame = document.createElement('article'); frame.className = 'photo-frame';
       const tile = document.createElement('button'); tile.className = 'mosaic-tile'; tile.dataset.id = photo.id;
-      const img = document.createElement('img'); img.src = `/api/images/${photo.id}`; img.alt = photo.description || 'Fotografía en blanco y negro, sin descripción disponible.'; img.loading = 'lazy'; img.decoding = 'async';
+      const img = document.createElement('img'); img.src = `/api/images/${photo.id}${photo.has_thumb ? '?size=thumb' : ''}`; img.alt = photo.description || 'Fotografía en blanco y negro, sin descripción disponible.'; img.loading = 'lazy'; img.decoding = 'async';
       tile.append(img);
       const unavailable = ['uploading','deleting'].includes(photo.status);
       if (unavailable) { img.remove(); const placeholder = document.createElement('span'); placeholder.className = 'photo-placeholder'; placeholder.textContent = labels[photo.status]; tile.append(placeholder); tile.disabled = true; }
@@ -249,20 +320,64 @@ export function photoUI({ root, api, shell, navigate, state, current, confirmDel
         }
       }
       container.append(frame);
+      if (!unavailable) updateBadge(photo);
     }
     async function load() {
       if (loading) return; loading = true; more.disabled = true;
       try {
-        const page = await api(`${adminGroup ? '/api/admin/groups/' + encodeURIComponent(adminGroup) + '/wall' : mine ? '/api/library' : '/api/wall'}${cursor ? '?before=' + encodeURIComponent(cursor) : ''}`);
+        const query = new URLSearchParams(); if (cursor) query.set('before', cursor); if (challengeFilter && !mine) query.set('challenge', challengeFilter);
+        const page = await api(`${adminGroup ? '/api/admin/groups/' + encodeURIComponent(adminGroup) + '/wall' : mine ? '/api/library' : '/api/wall'}${query.size ? '?' + query : ''}`);
         if (!current(version)) return;
         if (adminGroup) root.querySelector('#class-name').textContent = page.group.name;
         page.photos.forEach(photo => { if (!photos.has(photo.id)) add(photo); }); cursor = page.next; more.hidden = !cursor; more.textContent = 'Cargar más fotografías';
-        report(photos.size ? '' : mine ? 'Todavía no has enviado fotografías. Abre la cámara para empezar.' : 'El muro está esperando las primeras fotografías aprobadas.');
+        report(photos.size ? '' : mine ? 'Todavía no has enviado fotografías. Abre la cámara para empezar.' : challengeFilter ? 'Este reto todavía no tiene fotografías publicadas.' : 'El muro está esperando las primeras fotografías aprobadas.');
+        if (adminGroup && page.challenges) adminChallengeFilter(page.challenges, challengeFilter);
         update();
-      } catch (error) { if (!current(version)) return; report(error.message); more.hidden = false; more.textContent = 'Reintentar carga'; if (error.status === 401) navigate(adminGroup ? '/admin' : '/enter', true); }
+      } catch (error) { if (!current(version)) return; report(error.message); more.hidden = false; more.textContent = 'Reintentar carga'; if (error.status === 401) navigate(adminGroup ? '/admin' : '/login', true); }
       finally { loading = false; more.disabled = false; }
     }
     more.onclick = load; update(); await load();
   }
-  return { gallery, settings };
+  // Photographs waiting in this device's outbox.
+  async function outboxStatus(summary) {
+    const bar = root.querySelector('#outbox-bar');
+    if (!bar || !self.PhotownOutbox) return;
+    let items = [];
+    try { items = await self.PhotownOutbox.list(); } catch { return; }
+    bar.hidden = !items.length;
+    if (!items.length) return;
+    const failed = items.filter(item => item.deliveries.some(delivery => delivery.error));
+    bar.innerHTML = `<span></span><button type="button" class="retry">Enviar ahora</button>${failed.length ? '<button type="button" class="discard">Descartar las que fallan</button>' : ''}`;
+    bar.querySelector('span').textContent = failed.length ? `${items.length} ${items.length === 1 ? 'foto pendiente' : 'fotos pendientes'} de enviar. ${failed[0].deliveries.find(d => d.error).error}`
+      : `${items.length === 1 ? 'Una foto guardada' : items.length + ' fotos guardadas'} en este dispositivo${summary?.auth ? `: entra de nuevo para ${items.length === 1 ? 'enviarla' : 'enviarlas'}.` : summary?.offline || !navigator.onLine ? `. ${items.length === 1 ? 'Se enviará' : 'Se enviarán'} al volver la conexión.` : ', pendiente de envío.'}`;
+    bar.querySelector('.retry').onclick = async event => { event.target.disabled = true; await ui.retryOutbox?.(); outboxStatus(); };
+    const discard = bar.querySelector('.discard');
+    if (discard) discard.onclick = async () => { for (const item of failed) await self.PhotownOutbox.remove(item.id); outboxStatus(); };
+  }
+  function challengeBar(version, mine, adminGroup, filter) {
+    const bar = root.querySelector('#challenge-bar');
+    if (!bar || mine || adminGroup) return;
+    const list = state().challenges || [];
+    const selected = filter && list.find(item => item.id === filter);
+    if (selected) {
+      bar.innerHTML = `<div class="challenge-filter"><span>Reto · <strong></strong></span>${selected.active ? `<a class="button" href="/camera?challenge=${selected.id}" data-route="/camera?challenge=${selected.id}">Participar</a>` : ''}<a class="button" href="/wall" data-route="/wall" aria-label="Ver todo el muro">Todo el muro</a></div>`;
+      bar.querySelector('strong').textContent = selected.title;
+    } else {
+      const open = list.filter(item => item.active).slice(0, 2);
+      bar.innerHTML = open.map(item => `<div class="challenge-banner"><a href="/wall?challenge=${item.id}" data-route="/wall?challenge=${item.id}" class="challenge-link"><span class="eyebrow">Reto abierto</span><strong></strong></a><a class="button" href="/camera?challenge=${item.id}" data-route="/camera?challenge=${item.id}">Participar</a></div>`).join('');
+      open.forEach((item, index) => { bar.querySelectorAll('strong')[index].textContent = item.title; });
+    }
+    bar.querySelectorAll('[data-route]').forEach(el => el.onclick = event => { event.preventDefault(); navigate(el.dataset.route); });
+  }
+  function adminChallengeFilter(list, filter) {
+    const bar = root.querySelector('#challenge-bar');
+    if (!bar || !list.length || bar.childElementCount) return;
+    bar.innerHTML = '<div class="challenge-filter"><label for="challenge-select">Mostrar</label><select id="challenge-select"><option value="">Todo el muro</option></select></div>';
+    const select = bar.querySelector('select');
+    for (const item of list) { const option = document.createElement('option'); option.value = item.id; option.textContent = `Reto · ${item.title}${item.active ? '' : ' (cerrado)'}`; select.append(option); }
+    select.value = filter || '';
+    select.onchange = () => { const url = new URL(location.href); if (select.value) url.searchParams.set('challenge', select.value); else url.searchParams.delete('challenge'); navigate(url.pathname + url.search); };
+  }
+  const ui = { gallery, settings, outboxStatus, header, icon, modal };
+  return ui;
 }

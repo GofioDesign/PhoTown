@@ -1,3 +1,5 @@
-# Local development only. Copy to .dev.vars; replace both values.
-INVITE_CODE=replace-with-a-long-private-invitation-code
+# Local development only. Copy to .dev.vars and replace the secret.
 SESSION_SECRET=replace-with-at-least-32-random-characters
+# Show sign-in links in API responses on localhost (automated browser tests).
+# Never set this in production.
+DEV_LOGIN_LINKS=true
