@@ -13,7 +13,7 @@ async function route(request, env) {
   if (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
     throw new HttpError(403, 'Abre PhoTown mediante HTTPS.');
   }
-  if (env.DB && (url.pathname.startsWith('/api/') || ['/camera','/preview','/my-photos','/wall','/admin','/admin/wall','/settings','/challenges','/notifications'].includes(url.pathname))) {
+  if (env.DB && (url.pathname.startsWith('/api/') || ['/camera','/preview','/my-photos','/wall','/admin','/admin/wall','/settings'].includes(url.pathname))) {
     requireConfiguration(env);
     return communityRoute(request, env);
   }
@@ -66,11 +66,11 @@ async function route(request, env) {
     requireConfiguration(env);
     if (!(await readSession(env, request))) return new Response(null, { status: 302, headers: { Location: '/enter' } });
   }
-  if (['/', '/enter', '/login', '/camera', '/preview'].includes(url.pathname)) {
+  if (['/', '/enter', '/camera', '/preview'].includes(url.pathname)) {
     return env.ASSETS.fetch(new Request(new URL('/index.html', url), request));
   }
   // Public app assets only; photographs are authorized by communityRoute.
-  if (['/app.js', '/photo-ui.js', '/zip.js', '/admin.js', '/processing.js', '/install.js', '/grids.js', '/outbox.js', '/community-ui.js', '/styles.css', '/robots.txt', '/sw.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'].includes(url.pathname)) return env.ASSETS.fetch(request);
+  if (['/app.js', '/photo-ui.js', '/zip.js', '/admin.js', '/processing.js', '/install.js', '/styles.css', '/robots.txt', '/sw.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'].includes(url.pathname)) return env.ASSETS.fetch(request);
   return new Response('Página no encontrada', { status: 404 });
 }
 export default {
@@ -83,8 +83,7 @@ export default {
       if (response.status === 429) response.headers.set('Retry-After', '60');
     }
     const secured = new Response(response.body, response);
-    // Only authorised photo responses may opt into a short private cache.
-    if (!/^private, max-age=\d+$/.test(response.headers.get('Cache-Control') || '') || response.status !== 200) secured.headers.set('Cache-Control', 'private, no-store');
+    secured.headers.set('Cache-Control', 'private, no-store');
     secured.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
     secured.headers.set('X-Content-Type-Options', 'nosniff');
     secured.headers.set('Referrer-Policy', 'no-referrer');

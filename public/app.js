@@ -2,11 +2,7 @@ import { capture } from './processing.js';
 import { renderAdmin } from './admin.js';
 import { setupInstall } from './install.js';
 import { photoUI } from './photo-ui.js';
-import { communityUI } from './community-ui.js';
-import { GRIDS, gridName, gridSVG, fitOverlay } from './grids.js';
-import './outbox.js';
 
-const outbox = self.PhotownOutbox;
 const root = document.querySelector('#app');
 let stream;
 let shot;
@@ -14,16 +10,12 @@ let shotUrl;
 let busy = false;
 let renderVersion = 0;
 let authenticated = false;
-let account = { email: '', unread: 0, digest: true };
 let groupName = '';
 let groupId = '';
 let memberGroups = [];
-let challenges = [];
-let loginEmail = '';
+let invitedCode = '';
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const state = () => ({ id: groupId, name: groupName, groups: memberGroups, account, challenges, refresh: refreshSession });
-const ui = photoUI({ root, api, shell, navigate, state, current: version => version === renderVersion, confirmDeletion, logout });
-const community = communityUI({ root, api, shell, navigate, state, current: version => version === renderVersion, ui });
+const ui = photoUI({ root, api, shell, navigate, state: () => ({ id: groupId, name: groupName, groups: memberGroups, refresh: refreshSession }), current: version => version === renderVersion, confirmDeletion });
 
 function stopCamera() {
   stream?.getTracks().forEach(track => track.stop());
@@ -53,12 +45,11 @@ async function api(path, options = {}) {
     return data;
   } catch (error) {
     if (error instanceof TypeError || error.name === 'AbortError') {
-      throw new Error('No hay conexión con PhoTown. Comprueba tu conexión y vuelve a intentarlo.');
+      throw new Error('No hemos podido confirmar el envío. Comprueba tu conexión y vuelve a intentarlo.');
     }
     throw error;
   } finally { clearTimeout(timeout); }
 }
-const post = (path, body) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 function navigate(path, replace = false) {
   if (busy) return;
   history[replace ? 'replaceState' : 'pushState']({}, '', path);
@@ -75,9 +66,10 @@ function shell(content) {
     event.preventDefault();
     navigate(element.dataset.route);
   }));
+
 }
 function connection() {
-  message(navigator.onLine ? '' : 'Sin conexión. Puedes seguir fotografiando: las fotos se enviarán al volver la conexión.', '#connection');
+  message(navigator.onLine ? '' : 'Sin conexión. Puedes fotografiar y enviar cuando vuelva la conexión.', '#connection');
 }
 function topbar() {
   return '<header class="capture-header"><a class="brand" href="/wall" data-route="/wall">PHOTOWN</a><button data-route="/wall" aria-label="Volver al muro">×</button></header>';
@@ -85,65 +77,44 @@ function topbar() {
 async function refreshSession() {
   const session = await api('/api/session'); authenticated = session.authenticated;
   groupName = session.group?.name || ''; groupId = session.group?.id || '';
-  account = { email: session.email || '', unread: session.unread || 0, digest: session.digest !== false, identity: session.identity };
   memberGroups = authenticated ? (await api('/api/groups')).groups : [];
-  challenges = authenticated && groupId ? (await api('/api/challenges').catch(() => ({ challenges: [] }))).challenges : [];
 }
-async function logout() {
-  await post('/api/logout', {});
-  authenticated = false; groupId = groupName = ''; memberGroups = []; challenges = [];
-  navigate('/login', true);
-}
-
-// Passwordless entry: email → link or 6-digit code.
-function loginForm({ renew = false, notice = '' } = {}) {
-  shell(`<section class="entry"><p class="eyebrow">PHOTOWN</p><h1 class="entry-title">${renew ? 'Vuelve a entrar.' : 'Entra con tu correo.'}</h1><p>${notice ? escape(notice) : 'Te enviaremos un enlace y un código para entrar. Sin contraseñas.'}</p>
-    <form id="login"><label for="email">Correo electrónico</label><input id="email" name="email" type="email" required maxlength="254" autocomplete="email" inputmode="email" autocapitalize="none" spellcheck="false" aria-describedby="message"><button class="primary" type="submit">Enviarme el acceso</button></form>
-    <form id="code-form" hidden><p class="sent-to" role="status"></p><label for="code">Código de 6 números</label><input id="code" name="code" required inputmode="numeric" autocomplete="one-time-code" maxlength="7" pattern="[0-9 ]{6,7}" aria-describedby="message"><button class="primary" type="submit">Entrar</button><button type="button" id="other-email" class="text-button">Usar otro correo</button></form>
-    <p id="message" class="message" role="alert"></p><p id="dev-link" class="note" hidden></p>
-    <p class="note">${renew ? 'Tus fotos pendientes siguen guardadas en este dispositivo.' : 'Solo pueden entrar personas invitadas. Si aún no lo estás, deja tu correo y te avisaremos.'}</p></section>`);
-  const loginFormEl = root.querySelector('#login'), codeForm = root.querySelector('#code-form');
-  loginFormEl.elements.email.value = loginEmail;
-  const showCode = email => {
-    loginEmail = email; loginFormEl.hidden = true; codeForm.hidden = false;
-    codeForm.querySelector('.sent-to').textContent = `Si ${email} tiene invitación, acabamos de enviarle un enlace. Ábrelo en este dispositivo o escribe aquí el código del correo.`;
-    codeForm.elements.code.focus();
-  };
-  loginFormEl.onsubmit = async event => {
-    event.preventDefault(); if (busy) return;
-    const button = loginFormEl.querySelector('button'); button.disabled = true; message('Enviando…');
+function entryForm(renew = false) {
+  shell(`<section class="entry"><p class="eyebrow">PHOTOWN</p><h2>${renew ? 'Vuelve a entrar.' : 'Fotografía lo que te llame la atención.'}</h2><p>En PhoTown fotografiamos en blanco y negro.<br>Después lo miraremos juntos.</p><form id="entry"><label for="code">Código de invitación</label><input id="code" name="code" type="text" required maxlength="256" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="message"><button class="primary" type="submit">${renew ? 'Continuar con mi fotografía' : 'Entrar en PhoTown'}</button></form><p id="message" class="message" role="alert"></p><p class="note">${renew ? 'Tu captura sigue aquí mientras mantengas esta página abierta.' : 'Solo necesitas tu invitación. No te pedimos nombre ni correo.'}</p></section>`);
+  document.querySelector('#code').value = invitedCode;
+  if (!renew) {
+    const waitlist = document.createElement('section'); waitlist.className = 'waitlist';
+    waitlist.innerHTML = '<button class="waitlist-toggle" aria-expanded="false" aria-controls="waitlist-form">Quiero probarlo</button><form id="waitlist-form" hidden novalidate><label for="waitlist-email">Correo electrónico</label><input id="waitlist-email" name="email" type="email" autocomplete="email" maxlength="254" required aria-describedby="waitlist-help waitlist-message"><p class="note" id="waitlist-help">Guardaremos tu email en la lista de espera de PhoTown para poder avisarte cuando haya acceso. Solo podrá consultarlo el equipo administrador. Esta solicitud no da acceso a los grupos.</p><button>Entrar en lista de espera</button><p id="waitlist-message" role="status"></p></form>';
+    root.querySelector('.entry').append(waitlist);
+    const toggle = waitlist.querySelector('.waitlist-toggle'), form = waitlist.querySelector('form'), input = form.querySelector('input'), report = form.querySelector('[role=status]');
+    toggle.onclick = () => { form.hidden = !form.hidden; toggle.setAttribute('aria-expanded', String(!form.hidden)); if (!form.hidden) input.focus(); };
+    form.onsubmit = async event => {
+      event.preventDefault(); input.removeAttribute('aria-invalid');
+      if (!input.value.trim() || !input.validity.valid || !input.value.trim().split('@')[1]?.includes('.')) { input.setAttribute('aria-invalid', 'true'); report.textContent = 'Introduce un correo electrónico válido.'; input.focus(); return; }
+      const button = form.querySelector('button'); if (button.disabled) return; button.disabled = true; report.textContent = 'Guardando tu solicitud…';
+      try { await api('/api/waitlist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: input.value }) }); report.textContent = 'Gracias. Te avisaremos cuando puedas entrar.'; input.value = ''; }
+      catch (error) { report.textContent = error.message; }
+      finally { button.disabled = false; }
+    };
+  }
+  document.querySelector('#entry').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (busy) return;
+    busy = true;
+    const button = event.target.querySelector('button');
+    button.disabled = true;
+    message('Comprobando invitación…');
     try {
-      const email = loginFormEl.elements.email.value.trim();
-      const result = await post('/api/login', { email });
-      message(''); showCode(email);
-      if (result.dev_link) { const dev = root.querySelector('#dev-link'); dev.hidden = false; dev.innerHTML = `Modo local: <a href="${escape(result.dev_link)}">enlace de acceso</a> · código ${escape(result.dev_code)}`; }
+      await api('/api/enter', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: event.target.elements.code.value }) });
+      await refreshSession();
+      authenticated = true;
+      invitedCode = '';
+      busy = false;
+      navigate(shot ? '/preview' : '/wall', true);
     } catch (error) { message(error.message); }
-    finally { button.disabled = false; }
-  };
-  codeForm.onsubmit = async event => {
-    event.preventDefault(); if (busy) return;
-    const button = codeForm.querySelector('[type=submit]'); button.disabled = true; message('Comprobando…');
-    try { await finishLogin({ email: loginEmail, code: codeForm.elements.code.value }); }
-    catch (error) { message(error.message); }
-    finally { button.disabled = false; }
-  };
-  root.querySelector('#other-email').onclick = () => { codeForm.hidden = true; loginFormEl.hidden = false; message(''); loginFormEl.elements.email.focus(); };
+    finally { busy = false; button.disabled = false; }
+  });
 }
-async function finishLogin(body) {
-  await post('/api/login/verify', body);
-  await refreshSession();
-  navigate(shot ? '/preview' : '/wall', true);
-  flushOutbox();
-}
-function confirmLink(token) {
-  shell(`<section class="entry"><p class="eyebrow">PHOTOWN</p><h1 class="entry-title">Ya casi estás.</h1><p>Confirma para entrar en PhoTown en este dispositivo.</p><button class="primary" id="confirm">Entrar en PhoTown</button><p id="message" class="message" role="alert"></p><a class="secondary-link" href="/login" data-route="/login">Pedir un enlace nuevo</a></section>`);
-  root.querySelector('#confirm').onclick = async event => {
-    event.target.disabled = true; message('Entrando…');
-    try { await finishLogin({ token }); }
-    catch (error) { message(error.message); event.target.disabled = false; }
-  };
-}
-
 const cameraErrors = {
   NotAllowedError: 'Permite el acceso a la cámara en los ajustes de este sitio y vuelve a intentar.',
   NotFoundError: 'No encontramos una cámara. Abre PhoTown en un dispositivo con cámara.',
@@ -152,49 +123,13 @@ const cameraErrors = {
   SecurityError: 'El navegador ha bloqueado la cámara. Revisa los permisos del sitio.',
   AbortError: 'Se interrumpió la cámara. Vuelve a intentar.'
 };
-const stored = (key, fallback) => { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } };
-const store = (key, value) => { try { localStorage.setItem(key, value); } catch { /* private mode */ } };
 async function camera(version) {
-  const challenge = challenges.find(item => item.id === new URLSearchParams(location.search).get('challenge') && item.active);
-  let grid = challenge && challenge.grid !== 'none' ? challenge.grid : stored('photown-grid', 'none');
-  let orientation = Number(stored('photown-spiral', '0')) || 0;
-  shell(`<section class="camera-shell live-camera">${topbar()}<h1 class="sr-only">Cámara${challenge ? ', reto ' + escape(challenge.title) : ''}</h1>
-    <div class="viewfinder" id="capture-area"><video id="camera" autoplay muted playsinline aria-label="Vista en directo de la cámara en blanco y negro"></video><div class="grid-holder" id="grid-holder"></div><p id="camera-message" class="camera-message" role="status">Abriendo la cámara…</p></div>
-    <div class="camera-tools">${challenge ? `<p class="challenge-chip">Reto · ${escape(challenge.title)}</p>` : ''}<button id="grid-button" aria-haspopup="dialog">Guía</button><button id="rotate-grid" hidden>Girar</button></div>
-    <div class="controls"><button id="shutter" class="shutter" aria-label="Fotografiar" aria-describedby="capture-help" disabled></button><button id="retry-camera" hidden>Volver a abrir la cámara</button></div><p id="capture-help" class="note">Toca la imagen o pulsa Fotografiar para hacer la foto.</p><p id="message" class="message" role="alert"></p><p id="connection" class="connection" role="status"></p></section>`);
+  shell(`<section class="camera-shell live-camera">${topbar('BLANCO Y NEGRO')}<h1 class="sr-only">Cámara</h1><div class="viewfinder" id="capture-area"><video id="camera" autoplay muted playsinline aria-label="Vista en directo de la cámara en blanco y negro"></video><p id="camera-message" class="camera-message" role="status">Abriendo la cámara…</p></div><div class="controls"><button id="shutter" class="shutter" aria-label="Fotografiar" aria-describedby="capture-help" disabled></button><button id="retry-camera" hidden>Volver a abrir la cámara</button></div><p id="capture-help" class="note">Toca la imagen o pulsa Fotografiar para hacer la foto.</p><p id="message" class="message" role="alert"></p><p id="connection" class="connection" role="status"></p></section>`);
   connection();
   const video = document.querySelector('video');
   const shutter = document.querySelector('#shutter');
   const retry = document.querySelector('#retry-camera');
-  const holder = root.querySelector('#grid-holder'), area = root.querySelector('#capture-area');
-  const gridButton = root.querySelector('#grid-button'), rotate = root.querySelector('#rotate-grid');
-  area.append(root.querySelector('.controls'));
-  const drawGrid = () => {
-    const shown = fitOverlay(area, video, holder);
-    holder.innerHTML = shown ? gridSVG(grid, shown.width, shown.height, orientation) : '';
-    gridButton.textContent = `Guía: ${gridName(grid)}`;
-    gridButton.setAttribute('aria-label', `Guía de composición: ${gridName(grid)}. Cambiar guía`);
-    rotate.hidden = grid !== 'spiral';
-  };
-  const observer = new ResizeObserver(drawGrid); observer.observe(area);
-  video.addEventListener('loadedmetadata', drawGrid);
-  addEventListener('pagehide', () => observer.disconnect(), { once: true });
-  rotate.onclick = () => { orientation = (orientation + 1) % 4; store('photown-spiral', String(orientation)); drawGrid(); };
-  gridButton.onclick = () => {
-    const previous = document.activeElement, dialog = document.createElement('dialog');
-    dialog.className = 'grid-picker'; dialog.setAttribute('aria-labelledby', 'grid-title');
-    dialog.innerHTML = `<h2 id="grid-title">Guía de composición</h2><div class="grid-options"></div><form method="dialog"><button>Cerrar</button></form>`;
-    for (const option of GRIDS) {
-      const button = document.createElement('button'); button.type = 'button'; button.setAttribute('aria-pressed', String(option.id === grid));
-      button.innerHTML = `<span class="grid-option-name"></span><span class="note"></span>`;
-      button.querySelector('.grid-option-name').textContent = option.name; button.querySelector('.note').textContent = option.hint;
-      button.onclick = () => { grid = option.id; if (!challenge) store('photown-grid', grid); drawGrid(); dialog.close(); };
-      dialog.querySelector('.grid-options').append(button);
-    }
-    dialog.addEventListener('close', () => { dialog.remove(); previous?.focus(); }, { once: true });
-    root.append(dialog); dialog.showModal();
-  };
-  drawGrid();
+  root.querySelector('#capture-area').append(root.querySelector('.controls'));
   if (document.fullscreenEnabled) {
     const fullscreen = document.createElement('button'); fullscreen.id = 'fullscreen'; fullscreen.type = 'button'; fullscreen.textContent = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa';
     fullscreen.setAttribute('aria-label', fullscreen.textContent);
@@ -205,7 +140,7 @@ async function camera(version) {
     root.querySelector('.controls').append(fullscreen);
   }
   document.querySelector('.camera-shell').addEventListener('click', event => {
-    if (event.target.closest('button, a, input, select, textarea, label, nav, header, dialog, .camera-tools')) return;
+    if (event.target.closest('button, a, input, select, textarea, label, nav, header, dialog')) return;
     if (!shutter.disabled) shutter.click();
   });
   retry.addEventListener('click', () => render());
@@ -218,7 +153,7 @@ async function camera(version) {
       const captured = await capture(video);
       if (version !== renderVersion) return;
       clearShot();
-      shot = { ...captured, cameraUrl: location.pathname + location.search, challenge: challenge?.id || null, challengeGroup: challenge ? groupId : null, challengeTitle: challenge?.title || '' };
+      shot = captured;
       shotUrl = URL.createObjectURL(shot.blob);
       busy = false;
       navigate('/preview');
@@ -236,7 +171,6 @@ async function camera(version) {
     if (version !== renderVersion) return;
     message('', '#camera-message');
     shutter.disabled = false;
-    drawGrid();
     for (const track of stream.getVideoTracks()) track.addEventListener('ended', () => {
       if (version !== renderVersion) return;
       shutter.disabled = true;
@@ -250,81 +184,61 @@ async function camera(version) {
     retry.hidden = false;
   }
 }
-function receipt(text) {
-  document.querySelector('.publication-receipt')?.remove();
-  const note = document.createElement('p'); note.className = 'publication-receipt'; note.setAttribute('role', 'status');
-  note.textContent = text; document.body.append(note);
-  setTimeout(() => note.remove(), 8000);
-}
 function preview() {
   if (!shot) { navigate('/camera', true); return; }
-  const open = memberGroups.filter(group => group.status !== 'BLOCKED');
-  shell(`<section class="camera-shell capture-preview">${topbar()}<h1 class="sr-only">Vista previa de tu fotografía</h1><div class="viewfinder"><img class="photograph" id="photo" alt="Tu fotografía en blanco y negro"></div>
-    <div class="preview-options"></div><div class="controls"><button id="again">Repetir</button><button class="primary" id="publish">Enviar</button></div><p id="message" class="message" role="status"></p><p id="connection" class="connection" role="status"></p></section>`);
+  shell(`<section class="camera-shell capture-preview">${topbar()}<h1 class="sr-only">Vista previa de tu fotografía</h1><div class="viewfinder"><img class="photograph" id="photo" alt="Tu fotografía en blanco y negro"></div><div class="controls"><button id="again">Repetir</button><button class="primary" id="publish">Enviar</button></div><p id="message" class="message" role="status"></p><p id="connection" class="connection" role="status"></p></section>`);
   document.querySelector('#photo').src = shotUrl;
-  const options = root.querySelector('.preview-options');
-  if (shot.challenge) {
-    const label = document.createElement('label'); label.className = 'challenge-toggle';
-    label.innerHTML = '<input type="checkbox" id="for-challenge" checked> <span></span>';
-    label.querySelector('span').textContent = `Para el reto «${shot.challengeTitle}»`;
-    options.append(label);
-  }
   const destinations = document.createElement('fieldset'); destinations.className = 'destinations';
   destinations.innerHTML = '<legend>Publicar en</legend>';
-  destinations.hidden = open.length <= 1;
-  for (const group of open) {
+  destinations.hidden = memberGroups.filter(group => group.status !== 'BLOCKED').length <= 1;
+  const choices = shot.deliveries || memberGroups.filter(group => group.status !== 'BLOCKED');
+  for (const group of choices) {
     const label = document.createElement('label'), input = document.createElement('input'); input.type = 'checkbox'; input.value = group.id;
-    input.checked = group.id === (shot.challengeGroup || groupId) || open.length === 1;
+    input.checked = Boolean(shot.deliveries) || group.id === groupId || choices.length === 1; input.disabled = Boolean(shot.deliveries);
     label.append(input, document.createTextNode(group.name)); destinations.append(label);
   }
-  options.append(destinations);
+  root.querySelector('.controls').before(destinations);
   connection();
   document.querySelector('#again').addEventListener('click', () => {
     if (busy) return;
-    const back = shot.cameraUrl || '/camera';
     clearShot();
-    navigate(back, true);
+    navigate('/camera', true);
   });
   document.querySelector('#publish').addEventListener('click', async () => {
     if (busy || !shot) return;
-    const selected = [...destinations.querySelectorAll('input:checked')];
-    if (!selected.length) { message('Selecciona al menos un grupo.'); return; }
-    const forChallenge = shot.challenge && root.querySelector('#for-challenge')?.checked;
-    const item = { id: shot.id, created: Date.now(), blob: shot.blob, thumb: shot.thumb, deliveries: selected.map((input, index) => ({
-      id: input.value, name: memberGroups.find(group => group.id === input.value)?.name || '', photoId: index === 0 ? shot.id : crypto.randomUUID(),
-      challenge: forChallenge && input.value === shot.challengeGroup ? shot.challenge : null, result: null })) };
-    busy = true; root.querySelectorAll('button, input').forEach(control => control.disabled = true);
-    message('Guardando en este dispositivo…');
-    let saved = true;
-    try { await outbox.save(item); } catch { saved = false; }
-    if (!saved) {
-      // Without IndexedDB (some private modes) send from memory and stay here until it is done.
-      message('Enviando fotografía…');
-      const direct = await outbox.sendNow(shot.pendingItem || (shot.pendingItem = item));
-      busy = false; root.querySelectorAll('button, input').forEach(control => control.disabled = false);
-      if (!direct.done) { message(`${direct.failed[0]?.error || (direct.auth ? 'Tu sesión ha caducado. Vuelve a entrar para enviarla.' : 'Sin conexión.')} Mantén esta página abierta y vuelve a intentarlo.`); root.querySelector('#publish').textContent = 'Reintentar envío'; return; }
-      clearShot(); navigate('/wall', true); receipt('Fotografía enviada.'); return;
+    if (!shot.deliveries) {
+      const selected = [...destinations.querySelectorAll('input:checked')];
+      if (!selected.length) { message('Selecciona al menos un grupo.'); return; }
+      shot.deliveries = selected.map((input, index) => ({ id: input.value, name: memberGroups.find(group => group.id === input.value)?.name || '', photoId: index === 0 ? shot.id : crypto.randomUUID(), result: null }));
     }
-    busy = false; clearShot();
-    navigate('/wall', true);
-    const result = await flushOutbox(true);
-    if (result?.auth) receipt('Tu sesión ha caducado. La foto está guardada: entra de nuevo para enviarla.');
-    else if (result?.offline) receipt('Sin conexión. La foto está guardada y se enviará sola al volver la conexión.');
-    else if (result?.failed.length) receipt(result.failed[0].error);
-    else if (result?.sent) receipt(result.published === result.sent ? 'Fotografía publicada.' : 'Fotografía guardada. Pendiente de revisión.');
+    destinations.querySelectorAll('input').forEach(input => input.disabled = true);
+    busy = true;
+    const buttons = [...root.querySelectorAll('button')];
+    buttons.forEach(button => button.disabled = true);
+    message('Enviando fotografía…');
+    try {
+      for (const destination of shot.deliveries) {
+        if (!destination.result) destination.result = await api('/api/photos', { method: 'POST', headers: { 'Content-Type': 'image/webp', 'Idempotency-Key': destination.photoId, 'X-Photown-Group': destination.id }, body: shot.blob });
+      }
+      const pending = shot.deliveries.some(destination => destination.result.status === 'pending');
+      clearShot();
+      busy = false;
+      navigate('/wall', true);
+      const receipt = document.createElement('p'); receipt.className = 'publication-receipt'; receipt.setAttribute('role', 'status');
+      receipt.textContent = pending ? 'Fotografía guardada. Pendiente de revisión.' : 'Fotografía publicada.';
+      root.append(receipt);
+      setTimeout(() => receipt.remove(), 8000);
+    } catch (error) {
+      if (error.status === 401) {
+        authenticated = false;
+        entryForm(true);
+      } else {
+        const sent = shot.deliveries.filter(destination => destination.result).map(destination => destination.name);
+        message(`${error.message}\n${sent.length ? 'Ya enviada a: ' + sent.join(', ') + '. ' : ''}Tu fotografía sigue aquí. Puedes volver a enviarla; solo se reintentarán los grupos pendientes.`);
+        document.querySelector('#publish').textContent = 'Reintentar envío';
+      }
+    } finally { busy = false; buttons.forEach(button => button.disabled = false); }
   });
-}
-// Sends waiting photographs and refreshes the pending indicator on the wall.
-let lastFlush = null;
-async function flushOutbox(quiet = false) {
-  if (!authenticated) return null;
-  try {
-    lastFlush = await outbox.flush();
-    if (lastFlush.offline) outbox.requestSync();
-    if (!quiet && lastFlush.sent && location.pathname === '/wall') render();
-    ui.outboxStatus?.(lastFlush);
-    return lastFlush;
-  } catch { return null; }
 }
 async function confirmDeletion(items = []) {
   const previous = document.activeElement;
@@ -342,44 +256,37 @@ async function confirmDeletion(items = []) {
 function render() {
   const version = ++renderVersion;
   stopCamera();
-  const url = new URL(location.href);
-  const path = url.pathname;
-  if (path === '/login' && url.searchParams.has('token')) {
-    const token = url.searchParams.get('token');
-    history.replaceState({}, '', '/login');
-    if (/^[a-f0-9]{64}$/.test(token)) { confirmLink(token); return; }
+  const invitationUrl = new URL(location.href);
+  if (['/', '/enter'].includes(invitationUrl.pathname) && invitationUrl.searchParams.has('inv')) {
+    const code = invitationUrl.searchParams.get('inv');
+    invitedCode = code.length <= 256 ? code : '';
+    invitationUrl.searchParams.delete('inv');
+    invitationUrl.pathname = '/enter';
+    history.replaceState({}, '', invitationUrl.pathname + invitationUrl.search + invitationUrl.hash);
   }
+  const path = location.pathname;
   if (path === '/') {
     if (authenticated) { navigate(shot ? '/preview' : '/wall', true); return; }
-    shell(`<section class="entry"><h1 class="wordmark">PHOTOWN</h1><p class="intro">Un diario fotográfico compartido.<br>Fotografiamos en blanco y negro y aprendemos mirando juntos.</p><button class="primary" id="enter">Entrar</button><button type="button" data-install>Instalar app</button><a class="secondary-link" href="/admin" data-route="/admin">Administración</a></section>`);
-    document.querySelector('#enter').addEventListener('click', () => navigate(authenticated ? '/wall' : '/login'));
-  } else if (path === '/login' || path === '/enter') {
-    if (authenticated && !shot) { navigate('/wall', true); return; }
-    const legacy = url.searchParams.has('inv');
-    if (legacy) history.replaceState({}, '', '/login');
-    loginForm({ renew: Boolean(shot), notice: legacy ? 'Las invitaciones con código ya no se usan: ahora entras con tu correo. Si no te llega el acceso, pide a quien coordina tu grupo que te invite por correo.' : '' });
-  }
+    shell(`<section class="entry"><h1 class="wordmark">PHOTOWN</h1><p class="intro">Un diario fotográfico compartido.</p><button class="primary" id="enter">Entrar</button><button type="button" data-install>Instalar app</button><a class="secondary-link" href="/admin" data-route="/admin">Administración</a></section>`);
+    document.querySelector('#enter').addEventListener('click', () => navigate(authenticated ? '/wall' : '/enter'));
+  } else if (path === '/enter') entryForm(Boolean(shot));
   else if (path === '/admin/wall') ui.gallery(version, false, new URLSearchParams(location.search).get('group') || 'invalid');
   else if (path === '/admin') renderAdmin({ root, api, shell, current: () => version === renderVersion, confirmDeletion });
-  else if (['/camera','/preview','/my-photos','/wall','/settings','/challenges','/notifications'].includes(path)) {
-    if (!authenticated) { navigate('/login', true); return; }
+  else if (['/camera','/preview','/my-photos','/wall','/settings'].includes(path)) {
+    if (!authenticated) { navigate('/enter', true); return; }
     if (path === '/camera') { if (shot) navigate('/preview', true); else camera(version); }
     else if (path === '/preview') preview();
     else if (path === '/settings') ui.settings(version);
-    else if (path === '/challenges') community.challenges(version);
-    else if (path === '/notifications') community.notifications(version);
     else ui.gallery(version, path === '/my-photos');
   } else shell(`<section class="entry"><h1>Esta página no existe.</h1><a class="button" href="/" data-route="/">Volver a PhoTown</a></section>`);
 }
 addEventListener('popstate', () => { if (!busy) render(); });
-addEventListener('online', () => { connection(); flushOutbox(); });
+addEventListener('online', connection);
 document.addEventListener('fullscreenchange', () => { const button = document.querySelector('#fullscreen'); if (button) { button.textContent = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa'; button.setAttribute('aria-label', button.textContent); } });
 addEventListener('offline', connection);
 addEventListener('pagehide', () => { ++renderVersion; stopCamera(); });
 addEventListener('pageshow', event => { if (event.persisted) render(); });
-navigator.serviceWorker?.addEventListener('message', event => { if (event.data?.type === 'outbox') { lastFlush = event.data.result; ui.outboxStatus?.(lastFlush); } });
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) flushOutbox();
   if (location.pathname !== '/camera') return;
   if (document.hidden) { ++renderVersion; stopCamera(); }
   else if (!busy) render();
@@ -387,8 +294,6 @@ document.addEventListener('visibilitychange', () => {
 addEventListener('beforeunload', event => {
   if (shot || busy) { event.preventDefault(); event.returnValue = ''; }
 });
-ui.retryOutbox = () => flushOutbox();
 try { await refreshSession(); }
 catch { /* Entry remains available if the initial session check has no connection. */ }
 render();
-flushOutbox();
