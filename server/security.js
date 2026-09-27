@@ -5,7 +5,7 @@ export class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 export function requireConfiguration(env) {
-  if (!env.INVITE_CODE || env.INVITE_CODE.length < 24 || !env.SESSION_SECRET || env.SESSION_SECRET.length < 32) {
+  if ((!env.DB && (!env.INVITE_CODE || env.INVITE_CODE.length < 24)) || !env.SESSION_SECRET || env.SESSION_SECRET.length < 32) {
     throw new HttpError(503, 'PhoTown todavía no está preparado. Contacta con quien te invitó.');
   }
 }
