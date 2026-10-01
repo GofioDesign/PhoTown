@@ -73,7 +73,7 @@ test('network failure retains the capture and id for retry', async ({ page }) =>
     await route.abort('internetdisconnected');
   }, { times: 1 });
   await page.getByRole('button', { name: 'Enviar', exact: true }).click();
-  await expect(page.getByText('Tu fotografía sigue aquí.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Tu fotografía sigue aquí', { exact: false })).toBeVisible();
   await expect(page.locator('#photo')).toBeVisible();
   const retried = page.waitForRequest('**/api/photos');
   await page.getByRole('button', { name: 'Reintentar envío' }).click();
@@ -154,8 +154,8 @@ test('admin can create group, rotate invitation, moderate and block participants
   const secret = /^SESSION_SECRET=(.+)$/m.exec(readFileSync('.dev.vars', 'utf8'))[1].trim();
   const token = await signToken({ SESSION_SECRET: secret }, { sub: 'local-test-admin-' + crypto.randomUUID(), email: adminEmail }, 'admin', 600);
   await context.addCookies([{ name: 'photown_admin', value: token, domain: 'localhost', path: '/', httpOnly: true, sameSite: 'Strict' }]);
-  await page.goto('/admin');
-  await expect(page.getByRole('heading', { name: 'Administración de grupos' })).toBeVisible();
+  await page.goto('/admin?context=superadmin');
+  await expect(page.getByRole('heading', { name: 'Administración global' })).toBeVisible();
   const name = 'Prueba ' + Date.now();
   await page.getByLabel('Nombre del nuevo grupo').fill(name);
   await page.getByRole('button', { name: 'Crear grupo', exact: true }).click();
@@ -177,7 +177,7 @@ test('admin can create group, rotate invitation, moderate and block participants
   await page.getByRole('button', { name: 'Fotografiar', exact: true }).click();
   await page.getByRole('button', { name: 'Enviar', exact: true }).click();
   await expect(page.getByText('Fotografía guardada. Pendiente de revisión.', { exact: true })).toBeVisible();
-  await page.goto('/admin');
+  await page.goto('/admin?context=superadmin');
   await page.locator('.admin-row').filter({ has: page.getByRole('heading', { name, exact: true }) }).getByRole('button', { name: 'Gestionar grupo' }).click();
   await page.getByRole('button', { name: 'Aprobar', exact: true }).click();
   await expect(page.getByText('Publicada', { exact: true })).toBeVisible();
@@ -194,7 +194,7 @@ test('admin can create group, rotate invitation, moderate and block participants
   await expect(page.getByLabel('Mi identidad', { exact: true })).toHaveValue(/[a-f0-9-]{36}/);
   const newIdentity = await page.getByLabel('Mi identidad', { exact: true }).inputValue();
   expect(newIdentity).not.toBe(oldIdentity); expect(newIdentity).not.toBe('');
-  await page.goto('/admin');
+  await page.goto('/admin?context=superadmin');
   await page.locator('.admin-row').filter({ has: page.getByRole('heading', { name, exact: true }) }).getByRole('button', { name: 'Gestionar grupo' }).click();
   await page.getByLabel('Identidad anterior', { exact: true }).selectOption(oldIdentity);
   await page.getByLabel('Nueva identidad', { exact: true }).fill(newIdentity);
@@ -364,7 +364,7 @@ test('waitlist handles validation, failure and persistence without granting acce
   const secret = /^SESSION_SECRET=(.+)$/m.exec(readFileSync('.dev.vars', 'utf8'))[1].trim();
   const token = await signToken({SESSION_SECRET:secret},{sub:'local-test-admin-'+crypto.randomUUID(),email:adminEmail},'admin',600);
   await context.addCookies([{name:'photown_admin',value:token,domain:'localhost',path:'/',httpOnly:true,sameSite:'Strict'}]);
-  await page.goto('/admin'); await page.getByRole('button',{name:'Lista de espera',exact:true}).click();
+  await page.goto('/admin?context=superadmin'); await page.getByRole('button',{name:'Lista de espera',exact:true}).click();
   const row = page.locator('.waitlist-table article').filter({hasText:email}); await expect(row).toBeVisible();
   await row.getByRole('button',{name:'Eliminar solicitud',exact:true}).click(); await page.getByRole('button',{name:'Eliminar solicitud definitivamente'}).click();
   await expect(row).toHaveCount(0);
@@ -400,8 +400,10 @@ test('YO profile photo, direct card controls and administrator classroom wall', 
   const secret = /^SESSION_SECRET=(.+)$/m.exec(readFileSync('.dev.vars','utf8'))[1].trim();
   const token = await signToken({SESSION_SECRET:secret},{sub:'local-class-'+crypto.randomUUID(),email:adminEmail},'admin',600);
   await context.addCookies([{name:'photown_admin',value:token,domain:'localhost',path:'/',httpOnly:true,sameSite:'Strict'}]);
+  // v6: superadmin needs its own admin role in the default group to moderate it.
+  expect((await page.request.post('/api/admin/groups/default/admins',{headers:{Origin:'http://localhost:8787'},data:{email:adminEmail,role:'admin'}})).status()).toBe(200);
   const photo = (await (await page.request.get('/api/library')).json()).photos[0];
-  await page.request.post(`/api/admin/photos/${photo.id}/approve`,{headers:{Origin:'http://localhost:8787'}});
+  expect((await page.request.post(`/api/admin/photos/${photo.id}/approve`,{headers:{Origin:'http://localhost:8787'}})).status()).toBe(200);
   await page.goto('/wall');
   await expect(page.locator(`.photo-frame:has([data-id="${photo.id}"]) .tile-author`)).toHaveText('Mirada de prueba');
   await page.locator(`.photo-frame:has([data-id="${photo.id}"]) .tile-author img`).evaluate(img => img.decode());
@@ -409,7 +411,7 @@ test('YO profile photo, direct card controls and administrator classroom wall', 
   await expect(page.locator('.description-text')).toHaveText('Imagen para una clase.');
   await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
   await context.clearCookies({name:'photown_publisher'}); await context.clearCookies({name:'photown_group'});
-  await page.goto('/admin');
+  await page.goto('/admin?context=superadmin');
   await page.locator('.admin-row').filter({has:page.getByRole('heading',{name:'PhoTown',exact:true})}).getByRole('link',{name:'Muro',exact:true}).click();
   await page.setViewportSize({width:1440,height:900});
   await expect(page.locator('#class-name')).toHaveText('PhoTown');

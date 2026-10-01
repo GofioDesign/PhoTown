@@ -57,10 +57,21 @@ Reimplementarlo sobre el modelo v6 en lugar de unir la rama. Para cada pieza hay
 | JPEG en Safari y miniaturas de 720 px | Rescatar. Añadir `content_type` y `thumb_key` a PHOTO. |
 | Retos y guías de composición | Rescatar sobre GROUP y WALL de v6. |
 | Reacciones y avisos en la app | Rescatar sobre USER y MEMBERSHIP. |
-| Entrada con correo, enlace y código | **Decidir** si convive con OAuth o lo sustituye. Afecta a USER, sesiones y recuperación. |
+| Entrada con correo, enlace y código | **Planificado: magic link** (ver abajo). Convive con Google. |
 | Invitaciones por correo y resúmenes (Cloudflare Email Sending) | Rescatar después de decidir la identidad. Requiere dar de alta `gofiodesign.eu` en Email Sending. |
 
 La migración se renumera a partir de `0007`. No se reutiliza `0005`.
+
+#### Magic link (entrada por correo)
+
+Decidido el 1 de octubre de 2026: se añade la entrada con enlace mágico por correo. Por defecto **convive con Google**: cualquiera de los dos inicia sesión en el mismo USER.
+
+- Partir del código del Sprint 3 (`server/accounts.js`, `server/mail.js` en `87e0d2c`), adaptado a USER e `identity_providers` de v6, con proveedor `email` junto a `google`.
+- Enlace de un solo uso, guardado como hash, caducidad de 20 minutos, con página de confirmación para que los escáneres de correo no lo consuman. Código de 6 cifras como alternativa para la PWA de iPhone.
+- Respuesta idéntica exista o no la cuenta, y límite de solicitudes por correo.
+- Si el correo coincide con una identidad Google ya vinculada, se entra en el mismo USER (correo canónico del Sprint 2 v6).
+- Requiere dar de alta `gofiodesign.eu` en Cloudflare Email Sending.
+- Hace falta la identidad del Sprint 2 v6 (paso 3) antes de implementarlo.
 
 ### 5. Cámara móvil y accesibilidad
 
