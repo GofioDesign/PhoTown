@@ -14,7 +14,6 @@
   },
   "r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "photown-photos", "jurisdiction": "eu" }],
   "d1_databases": [{ "binding": "DB", "database_name": "photown-db", "database_id": "e083c537-f98b-4ea1-bc55-22bb2d7e738b", "migrations_dir": "db/migrations" }],
-  "vars": { "ADMIN_EMAILS": "gofiodesign@gmail.com,juanalbglz@gmail.com" },
   "triggers": { "crons": ["17 * * * *"] },
   "ratelimits": [
     { "name": "ENTRY_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },

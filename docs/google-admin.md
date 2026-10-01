@@ -4,7 +4,7 @@ Panel: https://photown.gofiodesign.eu/admin
 
 Dirección anterior disponible durante la transición: https://photown.photown.workers.dev/admin
 
-Solo pueden administrar `gofiodesign@gmail.com` y `juanalbglz@gmail.com`. El servidor aplica esa lista en cada solicitud, después de verificar la identidad de Google. Google no se exige a los participantes.
+Las cuentas superadmin se configuran mediante el secreto `SUPERADMIN_EMAILS`; sus direcciones no se publican en el repositorio. Superadmin crea grupos y asigna por correo OAuth sus admins y moderators. Google no se exige a los participantes.
 
 ## Google Auth Platform
 
@@ -16,13 +16,14 @@ En el proyecto de Google Cloud, usar un cliente OAuth de tipo **Aplicación web*
 - Si la audiencia sigue en modo de prueba, añadir las dos direcciones administradoras a los usuarios de prueba.
 - El flujo solicita únicamente `openid email`; no accede a Drive, Gmail ni contactos.
 
-`GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` están configurados como secretos del Worker. Nunca subir el archivo descargado de Google, credenciales, cookies o valores de secretos a GitHub. Para sustituir un valor usar `wrangler secret put` o el panel de secretos del Worker.
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` y `SUPERADMIN_EMAILS` se configuran como secretos del Worker. Nunca subir el archivo descargado de Google, credenciales, cookies, correos administrativos ni valores de secretos a GitHub. Para sustituir un valor usar `wrangler secret put` o el panel de secretos del Worker.
 
 El backend verifica firma, emisor, audiencia, caducidad, nonce, email verificado y lista de administradores. El flujo usa state de un solo uso y PKCE. La sesión administrativa tiene una duración de ocho horas y está separada de la identidad de participante. El botón Cerrar sesión solo cierra la sesión administrativa de PhoTown.
 
 ## Funciones del panel
 
-- Crear grupos independientes.
+- Crear grupos independientes y vincular un admin inicial mediante su correo OAuth.
+- Asignar admins o moderators adicionales por grupo. La asignación queda pendiente hasta el primer acceso OAuth de esa cuenta y después se materializa como MEMBERSHIP.
 - Generar invitaciones nuevas de 8 caracteres, con letras mayúsculas y números, sin 0/O/1/I/L. Se aceptan también al escribirlas en minúsculas. Los códigos anteriores siguen funcionando hasta rotarlos.
 - Copiar código o enlace `/enter?inv=CODIGO`. También se admite `/?inv=CODIGO`: rellena el código visible y basta pulsar Entrar. Se retira el parámetro de la barra de direcciones al cargar. El código se muestra una vez en administración y solo se conserva su hash.
 - Abrir/cerrar grupos. Cerrar el grupo impide inmediatamente el acceso de sus participantes.
@@ -30,7 +31,7 @@ El backend verifica firma, emisor, audiencia, caducidad, nonce, email verificado
 - Asignar confianza o bloquear a un participante dentro de un grupo.
 - Recuperar fotografías tras perder una cookie: la persona entra de nuevo, copia «Mi identidad» en Personalización → Recuperar mi acceso y la comunica al administrador. En Gestionar grupo, el administrador contrasta la identidad anterior con las fotografías (muestran su identificador), selecciona el origen e introduce la nueva identidad. Ambas deben pertenecer al grupo. La confirmación reasigna las fotos pendientes/publicadas/ocultas conservando sus estados y descripciones; bloquea el origen y conserva los permisos propios del destino. No restaura fotos borradas ni transfiere envíos incompletos u otros grupos. El proceso es repetible sin duplicar imágenes; se modifica propiedad, no los archivos de R2.
 
-Los dos administradores tienen acceso a todos los grupos de esta instalación. No hay roles administrativos por grupo todavía. Las listas se orientan a grupos pequeños; la lista de participantes del panel muestra hasta 200 por grupo.
+Ser superadmin no concede por sí solo moderación ordinaria sobre todos los grupos. La autoridad de contenido depende de una MEMBERSHIP `admin` o `moderator` en el GROUP correspondiente. Las listas se orientan a grupos pequeños; la lista de participantes del panel muestra hasta 200 por grupo.
 
 ## Accesibilidad
 
@@ -44,7 +45,7 @@ Esto no certifica conformidad WCAG ni sustituye pruebas con personas con discapa
 
 El alias opcional se guarda por grupo, admite hasta 40 caracteres y puede retirarse dejándolo vacío. No es una identidad verificada ni un nombre único. El muro muestra el alias actual; tras recuperar una identidad, las fotos usan el alias del destino.
 
-Cada envío a varios grupos crea una copia independiente. YO reúne todas las copias del propietario. Descargar o borrar actúa sobre las copias seleccionadas, y la confirmación identifica los grupos afectados. Cambiar de grupo no concede acceso a grupos nuevos, que siguen requiriendo invitación.
+Las copias antiguas creadas en varios grupos se conservan como PHOTO independientes. Para nuevas capturas, CAMERA fija un único GROUP de origen y el servidor impide enviarlas directamente a otro. YO reúne la autoría conservada; descargar o borrar actúa sobre las PHOTO seleccionadas.
 
 El participante puede borrar sus copias de todos sus grupos desde YO, incluso si están pendientes u ocultas. El servidor verifica la propiedad también al efectuar la retirada. La retirada del muro es inmediata; el archivo de R2 se elimina antes de confirmar el éxito. Si R2 falla, queda inaccesible y una tarea periódica reintenta el borrado.
 
