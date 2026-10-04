@@ -70,7 +70,7 @@ Decidido el 1 de octubre de 2026: se añade la entrada con enlace mágico por co
 - Enlace de un solo uso, guardado como hash, caducidad de 20 minutos, con página de confirmación para que los escáneres de correo no lo consuman. Código de 6 cifras como alternativa para la PWA de iPhone.
 - Respuesta idéntica exista o no la cuenta, y límite de solicitudes por correo.
 - Si el correo coincide con una identidad Google ya vinculada, se entra en el mismo USER (correo canónico del Sprint 2 v6).
-- Envío con un proveedor gratuito al principio (decidido el 4 de octubre de 2026): Resend por defecto, con Brevo como alternativa. Cloudflare Email Sending exige el plan Workers Paid para enviar a cualquier dirección. El Worker llama a la API del proveedor con `fetch`; la clave va como secreto (`RESEND_API_KEY`) y `gofiodesign.eu` se verifica con los registros DNS que pide el proveedor. El envío queda aislado en `server/mail.js` para poder cambiar de proveedor sin tocar el resto.
+- Envío con un proveedor gratuito al principio (decidido el 4 de octubre de 2026): Resend por defecto, con Brevo como alternativa. Cloudflare Email Sending exige el plan Workers Paid para enviar a cualquier dirección. El Worker llama a la API del proveedor con `fetch`; la clave va como secreto (`RESEND_API_KEY`) y el dominio verificado en Resend es el subdominio `photown.gofiodesign.eu` (registros DNS que pide el proveedor). El remitente será `PhoTown <acceso@photown.gofiodesign.eu>`, configurable con la variable `MAIL_FROM`. El envío queda aislado en `server/mail.js` para poder cambiar de proveedor sin tocar el resto.
 - Hace falta la identidad del Sprint 2 v6 (paso 3) antes de implementarlo.
 
 ### 5. Cámara móvil y accesibilidad
