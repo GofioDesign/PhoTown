@@ -35,7 +35,7 @@ La PR #1 no llegó a desplegarse, y D1 remoto no tiene `0005_accounts_challenges
 - PR #3: `sprint-1-v6-core` a `main`, con este documento. Está comprobado que se une sin conflictos.
 - Antes de unir, confirmar el estado de D1 remoto con `pnpm exec wrangler d1 migrations list photown-db --remote`. Según la auditoría del 14 de septiembre, ya tiene las tablas v6.
 - Ejecutar los recorridos Playwright de v6, que no se pudieron correr en su sprint.
-- A partir de aquí, `main` es la rama desplegable. El workflow `cloudflare-deploy.yml` solo se dispara desde `sprint-1-v6-core`. Cambiarlo a `main` en una PR aparte, porque modificar el workflow lanza un despliegue.
+- A partir de aquí, `main` es la rama desplegable. Los workflows `cloudflare-deploy.yml` y `cloudflare-diagnose.yml` se disparan desde `main` (cuando cambia su propio archivo, o a mano desde Actions).
 
 ### 3. Sprint 2 v6: identidad y ownership
 
