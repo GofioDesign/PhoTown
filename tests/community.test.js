@@ -7,12 +7,14 @@ import { signToken } from '../server/tokens.js';
 import { authorizeGoogleClaims } from '../server/google-auth.js';
 import { cleanupDeleted, photoWeek, erasePhoto } from '../server/community.js';
 import { sanitizeWebP } from '../server/webp.js';
+import { ensureAdminPrincipal } from '../server/core-v6.js';
 
 function env() {
   const sqlite = new DatabaseSync(':memory:'); sqlite.exec(readFileSync(new URL('../db/migrations/0001_groups.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../db/migrations/0002_participant_alias.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../db/migrations/0003_waitlist.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../db/migrations/0004_profile_avatars.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../db/migrations/0005_core_v6.sql', import.meta.url), 'utf8'));
   const db = { withSession() { return this; }, prepare(sql) {
     let args = [];
     return { bind(...values) { args = values.map(value => Array.isArray(value) ? new Uint8Array(value) : value); return this; },
@@ -23,7 +25,7 @@ function env() {
   }, async batch(statements) { sqlite.exec('BEGIN'); try { const results = []; for (const s of statements) results.push(await s.run()); sqlite.exec('COMMIT'); return results; } catch (e) { sqlite.exec('ROLLBACK'); throw e; } } };
   const objects = new Map();
   return { DB: db, sqlite, objects,
-    INVITE_CODE: 'the-initial-invitation-for-tests', SESSION_SECRET: 'a-long-and-private-secret-for-testing-only', ADMIN_EMAILS: 'admin@example.com',
+    INVITE_CODE: 'the-initial-invitation-for-tests', SESSION_SECRET: 'a-long-and-private-secret-for-testing-only', SUPERADMIN_EMAILS: 'admin@example.com',
     ENTRY_LIMITER: { limit: async () => ({ success: true }) }, UPLOAD_LIMITER: { limit: async () => ({ success: true }) }, ASSETS: { fetch: async () => new Response('asset') },
     PHOTOS: { async put(key, bytes) { if (objects.has(key)) return null; objects.set(key, bytes); return {}; }, async get(key) { return objects.has(key) ? { body: objects.get(key) } : null; }, async delete(key) { objects.delete(key); } }
   };
@@ -40,7 +42,15 @@ async function join(e, code = e.INVITE_CODE, cookies = '') {
   response.headers.getSetCookie().forEach(v => { const [k, value] = v.split(';')[0].split('='); entries.set(k, value); });
   return [...entries].map(([k,v]) => `${k}=${v}`).join('; ');
 }
-const adminCookie = async e => 'photown_admin=' + await signToken(e, { sub: 'google-subject', email: 'admin@example.com' }, 'admin', 3600);
+const adminCookie = async e => {
+  const identity = { sub: 'google-subject', email: 'admin@example.com' };
+  const principal = await ensureAdminPrincipal(e.DB, identity, ['admin@example.com']);
+  for (const group of e.sqlite.prepare('SELECT id FROM groups').all()) {
+    e.sqlite.prepare("INSERT OR IGNORE INTO group_role_assignments (group_id,email,role,assigned_by_user_id,created_at) VALUES (?,?,'admin',?,?)").run(group.id, identity.email, principal.user_id, new Date().toISOString());
+  }
+  await ensureAdminPrincipal(e.DB, identity, ['admin@example.com']);
+  return 'photown_admin=' + await signToken(e, identity, 'admin', 3600);
+};
 function image() {
   const b = new Uint8Array(30); b.set(Buffer.from('RIFF')); new DataView(b.buffer).setUint32(4,22,true); b.set(Buffer.from('WEBPVP8 '),8); new DataView(b.buffer).setUint32(16,10,true); b.set([0,0,0,0x9d,1,0x2a,16,0,16,0],20); return b;
 }
@@ -76,6 +86,20 @@ test('classroom wall requires Google administration and lists only published gro
   assert.equal('publisher_id' in page.photos[0], false);
 });
 
+test('a superadmin can choose a group role and that context is enforced by the server', async () => {
+  const e = env(); await join(e); const admin = await adminCookie(e);
+  const created = await (await call(e, '/api/admin/groups', 'POST', admin, { name: 'Second group', admin_email: 'admin@example.com' })).json();
+  const session = await (await call(e, '/api/admin/session', 'GET', admin)).json();
+  assert.equal(session.contexts.some(context => context.type === 'superadmin'), true);
+  assert.equal(session.contexts.some(context => context.type === 'group' && context.group_id === 'default' && context.role === 'admin'), true);
+  const scoped = { 'X-Photown-Admin-Group': 'default' };
+  const groups = await (await call(e, '/api/admin/groups', 'GET', admin, undefined, scoped)).json();
+  assert.deepEqual(groups.groups.map(group => group.id), ['default']);
+  assert.equal((await call(e, '/api/admin/waitlist', 'GET', admin, undefined, scoped)).status, 403);
+  assert.equal((await call(e, '/api/admin/groups', 'POST', admin, { name: 'Forbidden' }, scoped)).status, 403);
+  assert.equal((await call(e, `/api/admin/groups/${created.id}/active`, 'POST', admin, { active: false }, scoped)).status, 403);
+});
+
 test('personal library spans owned groups without exposing other participants or linking independent copies', async () => {
   const e = env(), a = await join(e), admin = await adminCookie(e);
   const group = await (await call(e, '/api/admin/groups', 'POST', admin, { name: 'Second group' })).json();
@@ -99,7 +123,7 @@ test('ownership is checked again before removal when identity recovery overtakes
   await upload(e, a, id);
   const photo = e.sqlite.prepare('SELECT * FROM photos WHERE id=?').get(id);
   const target = (await (await call(e, '/api/session', 'GET', b)).json()).identity;
-  e.sqlite.prepare('UPDATE photos SET publisher_id=? WHERE id=?').run(target, id);
+  e.sqlite.prepare('UPDATE photos SET publisher_id=?,user_id=? WHERE id=?').run(target, target, id);
   await assert.rejects(erasePhoto(e, e.DB, photo, photo.publisher_id), /ya no está disponible/);
   assert.equal((await call(e, `/api/library/${id}/download`, 'GET', b)).status, 200);
 });
@@ -130,6 +154,18 @@ test('persistent publisher survives re-entry; distinct browsers have distinct ow
   await join(e, e.INVITE_CODE, onlyIdentity);
   assert.equal(e.sqlite.prepare('SELECT COUNT(*) n FROM publishers').get().n, 2);
   assert.notEqual(a, b);
+});
+
+test('participant logout clears group access without deleting the persistent identity', async () => {
+  const e = env(), participant = await join(e);
+  const response = await call(e, '/api/logout', 'POST', participant);
+  assert.equal(response.status, 200);
+  const cookies = response.headers.getSetCookie();
+  assert.equal(cookies.some(cookie => cookie.startsWith('photown_group=') && cookie.includes('Max-Age=0')), true);
+  assert.equal(cookies.some(cookie => cookie.startsWith('photown_publisher=')), false);
+  const identityCookie = participant.split(';').find(cookie => cookie.trim().startsWith('photown_publisher='));
+  assert.equal((await call(e, '/api/session', 'GET', identityCookie)).status, 200);
+  assert.equal((await (await call(e, '/api/session', 'GET', identityCookie)).json()).authenticated, false);
 });
 test('pending photos are private; owner can describe and erase permanently; retries cannot resurrect', async () => {
   const e = env(), a = await join(e), b = await join(e), id = crypto.randomUUID();
@@ -173,14 +209,15 @@ test('moderation and groups are server-authorized; published images stay within 
   assert.equal((await call(e, `/api/images/${id}`, 'GET', a)).status, 404);
   assert.equal((await upload(e, a)).status, 401);
 });
-test('invitation rotation does not bootstrap the old code again; admin allowlist is checked each request', async () => {
+test('invitation rotation does not restore old codes and global role is independent from group admin', async () => {
   const e = env(); await join(e); const admin = await adminCookie(e);
   const rotated = await (await call(e, '/api/admin/groups/default/invitation', 'POST', admin)).json();
   assert.match(rotated.code, /^[A-HJKMNP-Z2-9]{8}$/);
   assert.equal((await call(e, '/api/enter', 'POST', '', { code: e.INVITE_CODE })).status, 401);
   await join(e, ' ' + rotated.code.toLowerCase() + ' ');
-  e.ADMIN_EMAILS = 'other@example.com';
-  assert.equal((await call(e, '/api/admin/groups', 'GET', admin)).status, 401);
+  e.SUPERADMIN_EMAILS = 'other@example.com';
+  assert.equal((await call(e, '/api/admin/groups', 'GET', admin)).status, 200);
+  assert.equal((await call(e, '/api/admin/groups', 'POST', admin, { name: 'Forbidden' })).status, 403);
 });
 test('failed R2 deletion hides image immediately and scheduled cleanup removes bytes', async () => {
   const e = env(), a = await join(e), id = crypto.randomUUID(); await upload(e, a, id);
@@ -215,11 +252,11 @@ test('admin identity recovery transfers only this group and preserves moderation
   assert.equal((await call(e, `/api/my-photos/${id}`, 'DELETE', fresh)).status, 200);
 });
 
-test('aliases are optional and scoped to group; destination upload and switching require membership', async () => {
+test('aliases are scoped to a group and CAMERA keeps one origin', async () => {
   const e = env(), a = await join(e), admin = await adminCookie(e);
   const group = await (await call(e, '/api/admin/groups', 'POST', admin, { name: 'Second' })).json();
   assert.equal((await call(e, '/api/groups/select', 'POST', a, { group: group.id })).status, 403);
-  assert.equal((await call(e, '/api/photos', 'POST', a, image(), { 'Content-Type':'image/webp', 'Idempotency-Key':crypto.randomUUID(), 'X-Photown-Group':group.id })).status, 403);
+  assert.equal((await call(e, '/api/photos', 'POST', a, image(), { 'Content-Type':'image/webp', 'Idempotency-Key':crypto.randomUUID(), 'X-Photown-Group':group.id })).status, 409);
   const both = await join(e, group.code, a);
   assert.equal((await (await call(e, '/api/groups', 'GET', both)).json()).groups.length, 2);
   assert.equal((await call(e, '/api/profile', 'POST', both, { alias: 'x'.repeat(41) })).status, 400);
@@ -227,7 +264,7 @@ test('aliases are optional and scoped to group; destination upload and switching
   assert.equal((await (await call(e, '/api/session', 'GET', a)).json()).alias, '');
   assert.equal((await (await call(e, '/api/session', 'GET', both)).json()).alias, 'Mirada');
   const id = crypto.randomUUID();
-  assert.equal((await call(e, '/api/photos', 'POST', a, image(), { 'Content-Type':'image/webp', 'Idempotency-Key':id, 'X-Photown-Group':group.id })).status, 201);
+  assert.equal((await call(e, '/api/photos', 'POST', both, image(), { 'Content-Type':'image/webp', 'Idempotency-Key':id, 'X-Photown-Group':group.id })).status, 201);
   await call(e, `/api/admin/photos/${id}/approve`, 'POST', admin);
   const wall = (await (await call(e, '/api/wall', 'GET', both)).json()).photos;
   assert.equal(wall[0].alias, 'Mirada'); assert.equal(wall[0].publisher_id, undefined);
