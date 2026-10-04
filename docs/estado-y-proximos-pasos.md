@@ -58,7 +58,7 @@ Reimplementarlo sobre el modelo v6 en lugar de unir la rama. Para cada pieza hay
 | Retos y guías de composición | Rescatar sobre GROUP y WALL de v6. |
 | Reacciones y avisos en la app | Rescatar sobre USER y MEMBERSHIP. |
 | Entrada con correo, enlace y código | **Planificado: magic link** (ver abajo). Convive con Google. |
-| Invitaciones por correo y resúmenes (Cloudflare Email Sending) | Rescatar después de decidir la identidad. Requiere dar de alta `gofiodesign.eu` en Email Sending. |
+| Invitaciones por correo y resúmenes | Rescatar después de la identidad, con el mismo proveedor gratuito que el magic link. |
 
 La migración se renumera a partir de `0007`. No se reutiliza `0005`.
 
@@ -70,7 +70,7 @@ Decidido el 1 de octubre de 2026: se añade la entrada con enlace mágico por co
 - Enlace de un solo uso, guardado como hash, caducidad de 20 minutos, con página de confirmación para que los escáneres de correo no lo consuman. Código de 6 cifras como alternativa para la PWA de iPhone.
 - Respuesta idéntica exista o no la cuenta, y límite de solicitudes por correo.
 - Si el correo coincide con una identidad Google ya vinculada, se entra en el mismo USER (correo canónico del Sprint 2 v6).
-- Requiere dar de alta `gofiodesign.eu` en Cloudflare Email Sending.
+- Envío con un proveedor gratuito al principio (decidido el 4 de octubre de 2026): Resend por defecto, con Brevo como alternativa. Cloudflare Email Sending exige el plan Workers Paid para enviar a cualquier dirección. El Worker llama a la API del proveedor con `fetch`; la clave va como secreto (`RESEND_API_KEY`) y `gofiodesign.eu` se verifica con los registros DNS que pide el proveedor. El envío queda aislado en `server/mail.js` para poder cambiar de proveedor sin tocar el resto.
 - Hace falta la identidad del Sprint 2 v6 (paso 3) antes de implementarlo.
 
 ### 5. Cámara móvil y accesibilidad
