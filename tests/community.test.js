@@ -15,6 +15,7 @@ function env() {
   sqlite.exec(readFileSync(new URL('../db/migrations/0003_waitlist.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../db/migrations/0004_profile_avatars.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../db/migrations/0005_core_v6.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../db/migrations/0006_identity_ownership.sql', import.meta.url), 'utf8'));
   const db = { withSession() { return this; }, prepare(sql) {
     let args = [];
     return { bind(...values) { args = values.map(value => Array.isArray(value) ? new Uint8Array(value) : value); return this; },
@@ -46,7 +47,7 @@ const adminCookie = async e => {
   const identity = { sub: 'google-subject', email: 'admin@example.com' };
   const principal = await ensureAdminPrincipal(e.DB, identity, ['admin@example.com']);
   for (const group of e.sqlite.prepare('SELECT id FROM groups').all()) {
-    e.sqlite.prepare("INSERT OR IGNORE INTO group_role_assignments (group_id,email,role,assigned_by_user_id,created_at) VALUES (?,?,'admin',?,?)").run(group.id, identity.email, principal.user_id, new Date().toISOString());
+    e.sqlite.prepare("INSERT OR IGNORE INTO group_role_assignments (group_id,email,display_email,role,assigned_by_user_id,created_at) VALUES (?,?,?,'admin',?,?)").run(group.id, identity.email, identity.email, principal.user_id, new Date().toISOString());
   }
   await ensureAdminPrincipal(e.DB, identity, ['admin@example.com']);
   return 'photown_admin=' + await signToken(e, identity, 'admin', 3600);
@@ -296,4 +297,67 @@ test('cross-origin deletion is denied and ISO week follows Canary local time', a
   assert.equal(photoWeek(new Date('2026-09-13T23:30:00Z')), '2026-W38');
   assert.equal(photoWeek(new Date('2026-01-01T12:00:00Z')), '2026-W01');
   assert.ok(sanitizeWebP(image()));
+});
+
+const googleCookie = async (e, sub, email) => {
+  await ensureAdminPrincipal(e.DB, { sub, email }, ['admin@example.com']);
+  return 'photown_admin=' + await signToken(e, { sub, email }, 'admin', 3600);
+};
+const roles = (e, group, cookie, method = 'GET', body, headers) => call(e, `/api/admin/groups/${group}/admins`, method, cookie, body, headers);
+
+test('owner manages roles only in its own group and the owner cannot be removed or demoted', async () => {
+  const e = env(); await join(e);
+  const superadmin = 'photown_admin=' + await signToken(e, { sub: 'super', email: 'admin@example.com' }, 'admin', 3600);
+  const created = await (await call(e, '/api/admin/groups', 'POST', superadmin, { name: 'Clase', owner_email: 'Ana.Perez@gmail.com' })).json();
+  const listing = await (await roles(e, created.id, superadmin)).json();
+  assert.deepEqual(listing.admins.map(item => [item.email, item.role]), [['Ana.Perez@gmail.com', 'owner']]);
+  assert.equal(listing.can_bootstrap_owner, false);
+  assert.equal((await roles(e, created.id, superadmin, 'POST', { email: 'other@example.com', role: 'owner' })).status, 403);
+  assert.equal((await roles(e, created.id, superadmin, 'POST', { email: 'other@example.com', role: 'admin' })).status, 403);
+
+  const owner = await googleCookie(e, 'g-ana', 'anaperez@gmail.com');
+  const session = await (await call(e, '/api/admin/session', 'GET', owner)).json();
+  assert.deepEqual(session.contexts.map(context => context.label), ['Owner · Clase']);
+  const scoped = { 'X-Photown-Admin-Group': created.id };
+  assert.equal((await roles(e, created.id, owner, 'GET', undefined, scoped)).status, 200);
+  assert.equal((await roles(e, created.id, owner, 'POST', { email: 'admin2@example.com', role: 'admin' }, scoped)).status, 200);
+  assert.equal((await roles(e, created.id, owner, 'POST', { email: 'mod@example.com', role: 'moderator' }, scoped)).status, 200);
+  assert.equal((await roles(e, created.id, owner, 'POST', { email: 'ana.perez@gmail.com', role: 'admin' }, scoped)).status, 409);
+  assert.equal((await roles(e, created.id, owner, 'DELETE', { email: 'anaperez@gmail.com' }, scoped)).status, 409);
+  assert.equal((await roles(e, 'default', owner, 'POST', { email: 'x@example.com', role: 'admin' })).status, 403);
+  assert.equal((await call(e, `/api/admin/groups/${created.id}/invitation`, 'POST', owner, undefined, scoped)).status, 200);
+
+  const admin2 = await googleCookie(e, 'g-admin2', 'admin2@example.com');
+  const moderator = await googleCookie(e, 'g-mod', 'mod@example.com');
+  assert.equal((await roles(e, created.id, admin2, 'GET')).status, 200);
+  assert.equal((await roles(e, created.id, admin2, 'POST', { email: 'y@example.com', role: 'moderator' })).status, 403);
+  assert.equal((await roles(e, created.id, admin2, 'POST', { email: 'admin2@example.com', role: 'owner' })).status, 403);
+  assert.equal((await roles(e, created.id, moderator, 'GET')).status, 403);
+  assert.equal((await roles(e, created.id, moderator, 'DELETE', { email: 'admin2@example.com' })).status, 403);
+
+  assert.equal((await roles(e, created.id, owner, 'DELETE', { email: 'mod@example.com' }, scoped)).status, 200);
+  assert.equal((await (await call(e, '/api/admin/session', 'GET', moderator)).json()).authenticated, false);
+  assert.equal((await call(e, `/api/admin/groups/${created.id}/wall`, 'GET', moderator)).status, 401);
+  const events = e.sqlite.prepare('SELECT subject_email,old_role,new_role,reason FROM role_events WHERE group_id=? ORDER BY rowid').all(created.id).map(row => ({ ...row }));
+  assert.deepEqual(events.map(event => event.reason), ['owner_bootstrap', 'role_assigned', 'role_assigned', 'role_removed']);
+});
+
+test('ownership transfer is atomic and superadmin can only bootstrap an ownerless group', async () => {
+  const e = env(); await join(e);
+  const superadmin = 'photown_admin=' + await signToken(e, { sub: 'super', email: 'admin@example.com' }, 'admin', 3600);
+  assert.equal((await (await roles(e, 'default', superadmin)).json()).can_bootstrap_owner, true);
+  assert.equal((await roles(e, 'default', superadmin, 'POST', { email: 'first@example.com', role: 'owner' })).status, 200);
+  assert.equal((await roles(e, 'default', superadmin, 'POST', { email: 'second@example.com', role: 'owner' })).status, 403);
+  const first = await googleCookie(e, 'g-first', 'first@example.com');
+  assert.equal((await roles(e, 'default', first, 'POST', { email: 'second@example.com', role: 'admin' })).status, 200);
+  const second = await googleCookie(e, 'g-second', 'second@example.com');
+  assert.equal((await roles(e, 'default', first, 'POST', { email: 'second@example.com', role: 'owner' })).status, 200);
+  const owners = e.sqlite.prepare("SELECT email FROM group_role_assignments WHERE group_id='default' AND role='owner'").all().map(row => row.email);
+  assert.deepEqual(owners, ['second@example.com']);
+  assert.equal(e.sqlite.prepare("SELECT COUNT(*) n FROM group_memberships WHERE group_id='default' AND role='owner'").get().n, 1);
+  assert.equal(e.sqlite.prepare("SELECT role FROM group_role_assignments WHERE group_id='default' AND email='first@example.com'").get().role, 'admin');
+  assert.equal((await roles(e, 'default', first, 'POST', { email: 'third@example.com', role: 'admin' })).status, 403);
+  assert.equal((await roles(e, 'default', second, 'DELETE', { email: 'first@example.com' })).status, 200);
+  const reasons = e.sqlite.prepare("SELECT reason FROM role_events WHERE group_id='default' ORDER BY rowid").all().map(row => row.reason);
+  assert.deepEqual(reasons, ['owner_bootstrap', 'role_assigned', 'ownership_transferred', 'ownership_transferred', 'role_removed']);
 });
