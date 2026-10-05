@@ -4,6 +4,7 @@ import { googleStart, googleCallback, googleReady, adminIdentity, adminEmails } 
 import { sanitizeWebP } from './webp.js';
 import { addPhotoToCurrentWall, assignGroupRole, createInitialWall, ensureAdminPrincipal, ensureGroupMembership, ensureLocalUser, groupAuthority, groupOwner, removeGroupRole, requireGroupAuthority, setGroupOwner } from './core-v6.js';
 import { canonicalEmail } from './identity.js';
+import { linkedEmail, requestEmailLink, requestLogin, verifyEmail } from './email-login.js';
 
 const json = (data, status = 200, headers = {}) => Response.json(data, { status, headers });
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -33,7 +34,10 @@ export function photoWeek(date = new Date()) {
 async function identity(request, env, db) {
   const token = cookieValue(request, 'photown_publisher');
   if (!token || !/^[a-f0-9]{64}$/.test(token)) return null;
-  return db.prepare('SELECT id,user_id FROM publishers WHERE token_hash=?').bind(await digest(token)).first();
+  const hash = await digest(token);
+  // The device that first entered keeps its original token; email sign-ins get a device session.
+  return (await db.prepare('SELECT id,user_id FROM publishers WHERE token_hash=?').bind(hash).first())
+    || db.prepare('SELECT p.id,p.user_id FROM device_sessions s JOIN publishers p ON p.id=s.publisher_id WHERE s.token_hash=? AND s.expires_at>?').bind(hash, Math.floor(Date.now() / 1000)).first();
 }
 async function participant(request, env, db) {
   const [publisher, access] = await Promise.all([identity(request, env, db), verifyToken(env, cookieValue(request, 'photown_group'), 'participant')]);
@@ -329,8 +333,14 @@ export async function communityRoute(request, env) {
     // Duplicate submissions have the same response; never disclose membership.
     return json({ saved: true });
   }
+  if ((path === '/api/login' || path === '/api/login/verify') && request.method === 'POST') {
+    await rate(env.ENTRY_LIMITER, 'login:' + await digest(request.headers.get('CF-Connecting-IP') || 'local'));
+    const body = await bodyJSON(request, 1024);
+    if (path === '/api/login') return json(await requestLogin(request, env, db, body));
+    return verifyEmail(request, env, db, body, await identity(request, env, db));
+  }
   const user = await participant(request, env, db);
-  if (path === '/api/session' && request.method === 'GET') return json({ authenticated: Boolean(user), group: user ? { id: user.group_id, name: user.name } : null, status: user?.status, identity: user?.publisher_id, alias: user?.alias, has_avatar: user ? Boolean(await db.prepare('SELECT 1 FROM profile_avatars WHERE publisher_id=? AND group_id=?').bind(user.publisher_id, user.group_id).first()) : false });
+  if (path === '/api/session' && request.method === 'GET') return json({ authenticated: Boolean(user), group: user ? { id: user.group_id, name: user.name } : null, status: user?.status, identity: user?.publisher_id, alias: user?.alias, email: user ? await linkedEmail(db, user.user_id) : null, has_avatar: user ? Boolean(await db.prepare('SELECT 1 FROM profile_avatars WHERE publisher_id=? AND group_id=?').bind(user.publisher_id, user.group_id).first()) : false });
   const avatarMatch = /^\/api\/photo-avatar\/([a-f0-9-]+)$/.exec(path);
   if (avatarMatch && request.method === 'GET') {
     const photo = await db.prepare("SELECT * FROM photos WHERE id=? AND status IN ('pending','published','hidden')").bind(avatarMatch[1]).first();
@@ -397,6 +407,10 @@ export async function communityRoute(request, env) {
     const member = await db.prepare("SELECT g.id,g.name FROM group_memberships gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=? AND gm.state NOT IN ('blocked','left') AND g.id=? AND g.active=1").bind(user.user_id, typeof group === 'string' ? group : '').first();
     if (!member) throw new HttpError(403, 'Primero necesitas una invitación para ese grupo.');
     return json({ group: member }, 200, { 'Set-Cookie': cookieHeader(request, 'photown_group', await signToken(env, { publisher: user.publisher_id, group: member.id }, 'participant', 43200), 43200) });
+  }
+  if (path === '/api/account/email' && request.method === 'POST') {
+    await rate(env.UPLOAD_LIMITER, user.publisher_id);
+    return json(await requestEmailLink(request, env, db, user.user_id, await bodyJSON(request, 1024)));
   }
   if (path === '/api/profile' && request.method === 'POST') {
     await rate(env.UPLOAD_LIMITER, user.publisher_id);
