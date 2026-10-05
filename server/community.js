@@ -5,6 +5,7 @@ import { sanitizeWebP } from './webp.js';
 import { addPhotoToCurrentWall, assignGroupRole, createInitialWall, ensureAdminPrincipal, ensureGroupMembership, ensureLocalUser, groupAuthority, groupOwner, removeGroupRole, requireGroupAuthority, setGroupOwner } from './core-v6.js';
 import { canonicalEmail } from './identity.js';
 import { linkedEmail, requestEmailLink, requestLogin, verifyEmail } from './email-login.js';
+import { acceptInvitation, listInvitations, previewInvitation, sendInvitations } from './invitations.js';
 
 const json = (data, status = 200, headers = {}) => Response.json(data, { status, headers });
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -246,7 +247,7 @@ async function adminRoutes(request, env, db, url) {
       return json({ id, code }, 201);
     }
   }
-  const groupAction = /^\/api\/admin\/groups\/([a-z0-9-]+)\/(invitation|active|photos|publishers|wall|admins|challenges)$/.exec(url.pathname);
+  const groupAction = /^\/api\/admin\/groups\/([a-z0-9-]+)\/(invitation|active|photos|publishers|wall|admins|challenges|email-invitations)$/.exec(url.pathname);
   if (groupAction) {
     const [, group, action] = groupAction;
     requireSelectedGroup(group);
@@ -295,6 +296,13 @@ async function adminRoutes(request, env, db, url) {
       const page = await listPhotos(db, "group_id=? AND status='published'", [group], url);
       page.photos.forEach(photo => { delete photo.publisher_id; });
       return json({ ...page, can_rotate: true, challenges: (await challengeList(db, group, false)).results, group: await db.prepare('SELECT id,name FROM groups WHERE id=?').bind(group).first() });
+    }
+    if (action === 'email-invitations' && request.method === 'GET') return json({ invitations: await listInvitations(db, group) });
+    if (action === 'email-invitations' && request.method === 'POST') {
+      const groupData = await db.prepare('SELECT name,active FROM groups WHERE id=?').bind(group).first();
+      if (!groupData.active) throw new HttpError(409, 'Abre el grupo antes de invitar.');
+      const body = await bodyJSON(request, 8192);
+      return json(await sendInvitations(request, env, db, { groupId: group, groupName: groupData.name, actorUserId: admin.user_id, emails: body?.emails }));
     }
     if (action === 'challenges' && request.method === 'GET') return json({ challenges: (await challengeList(db, group, false)).results });
     if (action === 'challenges' && request.method === 'POST') {
@@ -411,6 +419,12 @@ export async function communityRoute(request, env) {
     const body = await bodyJSON(request, 1024);
     if (path === '/api/login') return json(await requestLogin(request, env, db, body));
     return verifyEmail(request, env, db, body, await identity(request, env, db));
+  }
+  if ((path === '/api/invitation' || path === '/api/invitation/accept') && request.method === 'POST') {
+    await rate(env.ENTRY_LIMITER, 'invite:' + await digest(request.headers.get('CF-Connecting-IP') || 'local'));
+    const body = await bodyJSON(request, 1024);
+    if (path === '/api/invitation') return json(await previewInvitation(db, body));
+    return acceptInvitation(request, env, db, body, await identity(request, env, db));
   }
   const user = await participant(request, env, db);
   if (path === '/api/session' && request.method === 'GET') return json({ authenticated: Boolean(user), group: user ? { id: user.group_id, name: user.name } : null, status: user?.status, identity: user?.publisher_id, alias: user?.alias, email: user ? await linkedEmail(db, user.user_id) : null, has_avatar: user ? Boolean(await db.prepare('SELECT 1 FROM profile_avatars WHERE publisher_id=? AND group_id=?').bind(user.publisher_id, user.group_id).first()) : false });

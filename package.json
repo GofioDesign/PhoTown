@@ -10,7 +10,7 @@
     "dev": "wrangler dev",
     "test": "node --test tests/*.test.js",
     "test:browser": "playwright test",
-    "check": "node --check server/worker.js && node --check server/community.js && node --check server/core-v6.js && node --check server/google-auth.js && node --check server/identity.js && node --check server/email-login.js && node --check server/mail.js && node --check public/app.js && node --check public/admin.js && node --check public/processing.js && node --check public/photo-ui.js && node --check public/zip.js && node --check public/grids.js && node --check public/clipping.js",
+    "check": "node --check server/worker.js && node --check server/community.js && node --check server/core-v6.js && node --check server/google-auth.js && node --check server/identity.js && node --check server/email-login.js && node --check server/mail.js && node --check server/invitations.js && node --check public/app.js && node --check public/admin.js && node --check public/processing.js && node --check public/photo-ui.js && node --check public/zip.js && node --check public/grids.js && node --check public/clipping.js",
     "build": "wrangler deploy --dry-run --outdir dist",
     "deploy": "wrangler deploy"
   },

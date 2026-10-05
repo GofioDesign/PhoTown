@@ -159,6 +159,31 @@ function loginPage() {
     finish({ purpose: 'login', email: emailForm.elements.email.value, code: codeForm.elements.code.value }, codeForm.querySelector('button'));
   };
 }
+async function invitePage() {
+  const token = new URLSearchParams(location.search).get('token') || sessionStorage.getItem('photown-invite') || '';
+  // Keep the one-use token out of the address bar and history, but survive a reload.
+  try { if (token) sessionStorage.setItem('photown-invite', token); } catch { /* private mode */ }
+  history.replaceState({}, '', '/invite');
+  shell('<section class="entry"><p class="eyebrow">PHOTOWN</p><h1>Invitación</h1><p id="invite-detail">Comprobando la invitación…</p><button class="primary" id="accept-invite" hidden>Unirme al grupo</button><p id="message" class="message" role="alert"></p><a class="secondary-link" href="/enter" data-route="/enter">Tengo un código de invitación</a></section>');
+  const detail = root.querySelector('#invite-detail'), accept = root.querySelector('#accept-invite');
+  try {
+    const invitation = await api('/api/invitation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+    detail.textContent = `Te han invitado a ${invitation.group}. Al unirte, ${invitation.email} quedará vinculado y podrás entrar desde cualquier dispositivo con «Entrar con mi correo».`;
+    accept.hidden = false;
+  } catch (error) { detail.textContent = error.message; return; }
+  accept.onclick = async () => {
+    if (busy) return;
+    busy = true; accept.disabled = true; message('Entrando…');
+    try {
+      await api('/api/invitation/accept', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+      try { sessionStorage.removeItem('photown-invite'); } catch { /* private mode */ }
+      await refreshSession();
+      busy = false;
+      navigate('/wall', true);
+    } catch (error) { message(error.message); accept.disabled = false; }
+    finally { busy = false; }
+  };
+}
 const cameraErrors = {
   NotAllowedError: 'Permite el acceso a la cámara en los ajustes de este sitio y vuelve a intentar.',
   NotFoundError: 'No encontramos una cámara. Abre PhoTown en un dispositivo con cámara.',
@@ -368,6 +393,7 @@ function render() {
     document.querySelector('#enter').addEventListener('click', () => navigate(authenticated ? '/wall' : '/enter'));
   } else if (path === '/enter') entryForm(Boolean(shot));
   else if (path === '/login') loginPage();
+  else if (path === '/invite') invitePage();
   else if (path === '/admin/wall') ui.gallery(version, false, new URLSearchParams(location.search).get('group') || 'invalid');
   else if (path === '/admin') renderAdmin({ root, api, shell, current: () => version === renderVersion, confirmDeletion });
   else if (['/camera','/preview','/my-photos','/wall','/settings'].includes(path)) {

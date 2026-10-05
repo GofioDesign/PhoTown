@@ -18,6 +18,7 @@ function env() {
   sqlite.exec(readFileSync(new URL('../db/migrations/0006_identity_ownership.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../db/migrations/0007_email_login.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../db/migrations/0008_rotation_challenges.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../db/migrations/0009_email_invitations.sql', import.meta.url), 'utf8'));
   const db = { withSession() { return this; }, prepare(sql) {
     let args = [];
     return { bind(...values) { args = values.map(value => Array.isArray(value) ? new Uint8Array(value) : value); return this; },
@@ -470,4 +471,37 @@ test('admins configure composition challenges; photos join only open challenges 
   const other = await (await call(e, '/api/admin/groups', 'POST', admin, { name: 'Otro' })).json(), outsider = await join(e, other.code);
   await call(e, `/api/admin/challenges/${id}`, 'POST', admin, { active: true });
   assert.equal((await call(e, '/api/photos', 'POST', outsider, image(), { 'Content-Type': 'image/webp', 'Idempotency-Key': crypto.randomUUID(), 'X-Photown-Challenge': id })).status, 409);
+});
+
+const inviteToken = e => /\/invite\?token=([a-f0-9]{64})/.exec(e.MAIL_OUTBOX.at(-1).text)[1];
+test('admins invite by email; the link joins the group once and links the address', async () => {
+  const e = env(); e.MAIL_OUTBOX = [];
+  await join(e); const admin = await adminCookie(e);
+  const group = await (await call(e, '/api/admin/groups', 'POST', admin, { name: 'Clase' })).json();
+  await call(e, `/api/admin/groups/${group.id}/admins`, 'POST', admin, { email: 'admin@example.com', role: 'owner' });
+  assert.equal((await call(e, `/api/admin/groups/${group.id}/email-invitations`, 'POST', '', { emails: 'a@example.com' })).status, 401);
+  const sent = await (await call(e, `/api/admin/groups/${group.id}/email-invitations`, 'POST', admin, { emails: 'Lucia@Example.com, not-an-email' })).json();
+  assert.deepEqual(sent.results.map(r => r.status), ['sent', 'invalid']);
+  assert.equal(e.MAIL_OUTBOX.at(-1).to, 'Lucia@Example.com');
+  assert.match(e.MAIL_OUTBOX.at(-1).subject, /Clase/);
+  const token = inviteToken(e);
+  assert.deepEqual((await (await call(e, `/api/admin/groups/${group.id}/email-invitations`, 'POST', admin, { emails: 'lucia@example.com' })).json()).results.map(r => r.status), ['recent']);
+  assert.deepEqual(await (await call(e, '/api/invitation', 'POST', '', { token })).json(), { group: 'Clase', email: 'Lucia@Example.com' });
+  const accepted = await call(e, '/api/invitation/accept', 'POST', '', { token });
+  assert.equal(accepted.status, 200);
+  const lucia = cookiesFrom(accepted);
+  const session = await (await call(e, '/api/session', 'GET', lucia)).json();
+  assert.equal(session.group.id, group.id); assert.equal(session.email, 'Lucia@Example.com');
+  assert.equal((await call(e, '/api/invitation/accept', 'POST', '', { token })).status, 410);
+  const listing = (await (await call(e, `/api/admin/groups/${group.id}/email-invitations`, 'GET', admin)).json()).invitations;
+  assert.deepEqual(listing.map(item => item.status), ['accepted']);
+  assert.deepEqual((await (await call(e, `/api/admin/groups/${group.id}/email-invitations`, 'POST', admin, { emails: 'lucia@example.com' })).json()).results.map(r => r.status), ['member']);
+  // A second group invitation to the same address opens the same USER on a new device.
+  await call(e, `/api/admin/groups/default/email-invitations`, 'POST', admin, { emails: 'lucia@example.com' });
+  const second = await call(e, '/api/invitation/accept', 'POST', '', { token: inviteToken(e) });
+  const other = cookiesFrom(second);
+  assert.equal((await (await call(e, '/api/session', 'GET', other)).json()).identity, session.identity);
+  const groups = (await (await call(e, '/api/groups', 'GET', other)).json()).groups.map(g => g.name).sort();
+  assert.deepEqual(groups, ['Clase', 'PhoTown']);
+  assert.equal((await call(e, '/api/invitation', 'POST', '', { token: 'f'.repeat(64) })).status, 410);
 });
