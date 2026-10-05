@@ -71,7 +71,7 @@ Decidido el 1 de octubre de 2026: se añade la entrada con enlace mágico por co
 - Respuesta idéntica exista o no la cuenta, y límite de solicitudes por correo.
 - Si el correo coincide con una identidad Google ya vinculada, se entra en el mismo USER (correo canónico del Sprint 2 v6).
 - Envío con un proveedor gratuito al principio (decidido el 4 de octubre de 2026): Resend por defecto, con Brevo como alternativa. Cloudflare Email Sending exige el plan Workers Paid para enviar a cualquier dirección. El Worker llama a la API del proveedor con `fetch`; la clave va como secreto (`RESEND_API_KEY`) y el dominio verificado en Resend es el subdominio `photown.gofiodesign.eu` (registros DNS que pide el proveedor). El remitente será `PhoTown <acceso@photown.gofiodesign.eu>`, configurable con la variable `MAIL_FROM`. El envío queda aislado en `server/mail.js` para poder cambiar de proveedor sin tocar el resto.
-- Hace falta la identidad del Sprint 2 v6 (paso 3) antes de implementarlo.
+- Implementado el 5 de octubre de 2026 (migración `0007_email_login.sql`, `server/email-login.js`): quien participa vincula su correo desde Personalización con un código o enlace que solo vale en el mismo navegador. Después entra con «Entrar con mi correo» en cualquier dispositivo y recupera su mismo USER, sus fotos y sus grupos; cada dispositivo tiene su propia sesión de un año. Un correo ya vinculado a otro USER no se fusiona: se informa del conflicto y no cambia nada. La entrada administrativa sigue siendo con Google, y la coincidencia con una identidad Google llegará con la vinculación de Google desde YO.
 
 ### 5. Cámara móvil y accesibilidad
 

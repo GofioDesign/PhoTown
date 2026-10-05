@@ -426,3 +426,36 @@ test('YO profile photo, direct card controls and administrator classroom wall', 
   await page.screenshot({path:testInfo.outputPath('classroom-fullscreen.png')});
   await page.keyboard.press('Escape'); await expect(page.locator(`[data-id="${photo.id}"]`)).toBeFocused();
 });
+
+test('a participant links an email in Personalización and signs in with it on a new device', async ({ page, browser }) => {
+  if (!/^DEV_LOGIN_LINKS=true$/m.test(readFileSync('.dev.vars', 'utf8'))) throw new Error('Add DEV_LOGIN_LINKS=true to your local .dev.vars.');
+  const address = `ana.${crypto.randomUUID().slice(0, 8)}@example.com`;
+  await enter(page);
+  await page.goto('/settings');
+  await page.getByLabel('Correo electrónico').fill(address);
+  const requested = page.waitForResponse(response => response.url().endsWith('/api/account/email'));
+  await page.getByRole('button', { name: 'Enviarme el código' }).click();
+  const { dev_code } = await (await requested).json();
+  await page.getByLabel('Código de 6 números').fill(dev_code);
+  await page.getByRole('button', { name: 'Vincular mi correo' }).click();
+  await expect(page.getByText(`Vinculado a ${address}.`)).toBeVisible();
+  expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+  const identity = (await (await page.request.get('/api/session')).json()).identity;
+
+  const other = await browser.newContext({ extraHTTPHeaders: { 'CF-Connecting-IP': '2001:db8::beef' } });
+  const phone = await other.newPage();
+  await phone.goto('/enter');
+  await phone.getByRole('link', { name: 'Entrar con mi correo' }).click();
+  await phone.getByLabel('Correo electrónico').fill(address.toUpperCase());
+  const sent = phone.waitForResponse(response => response.url().endsWith('/api/login'));
+  await phone.getByRole('button', { name: 'Enviarme un acceso' }).click();
+  const { dev_link } = await (await sent).json();
+  // wrangler dev rewrites the request host, so follow the link's path on the test server.
+  const link = new URL(dev_link); await phone.goto(link.pathname + link.search);
+  await expect(phone).toHaveURL(/\/login$/);
+  expect((await new AxeBuilder({ page: phone }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+  await phone.getByRole('button', { name: 'Continuar' }).click();
+  await expect(phone).toHaveURL(/\/wall$/);
+  expect((await (await phone.request.get('/api/session')).json()).identity).toBe(identity);
+  await other.close();
+});

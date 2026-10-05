@@ -83,7 +83,7 @@ async function refreshSession() {
   memberGroups = authenticated ? (await api('/api/groups')).groups : [];
 }
 function entryForm(renew = false) {
-  shell(`<section class="entry"><p class="eyebrow">PHOTOWN</p><h2>${renew ? 'Vuelve a entrar.' : 'Fotografía lo que te llame la atención.'}</h2><p>En PhoTown fotografiamos en blanco y negro.<br>Después lo miraremos juntos.</p><form id="entry"><label for="code">Código de invitación</label><input id="code" name="code" type="text" required maxlength="256" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="message"><button class="primary" type="submit">${renew ? 'Continuar con mi fotografía' : 'Entrar en PhoTown'}</button></form><p id="message" class="message" role="alert"></p><p class="note">${renew ? 'Tu captura sigue aquí mientras mantengas esta página abierta.' : 'Solo necesitas tu invitación. No te pedimos nombre ni correo.'}</p></section>`);
+  shell(`<section class="entry"><p class="eyebrow">PHOTOWN</p><h2>${renew ? 'Vuelve a entrar.' : 'Fotografía lo que te llame la atención.'}</h2><p>En PhoTown fotografiamos en blanco y negro.<br>Después lo miraremos juntos.</p><form id="entry"><label for="code">Código de invitación</label><input id="code" name="code" type="text" required maxlength="256" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="message"><button class="primary" type="submit">${renew ? 'Continuar con mi fotografía' : 'Entrar en PhoTown'}</button></form><p id="message" class="message" role="alert"></p><p class="note">${renew ? 'Tu captura sigue aquí mientras mantengas esta página abierta.' : 'Solo necesitas tu invitación. No te pedimos nombre ni correo.'}</p><a class="secondary-link" href="/login" data-route="/login">Entrar con mi correo</a></section>`);
   document.querySelector('#code').value = invitedCode;
   if (!renew) {
     const waitlist = document.createElement('section'); waitlist.className = 'waitlist';
@@ -117,6 +117,45 @@ function entryForm(renew = false) {
     } catch (error) { message(error.message); }
     finally { busy = false; button.disabled = false; }
   });
+}
+function loginPage() {
+  const token = new URLSearchParams(location.search).get('token');
+  const finish = async (body, button) => {
+    if (busy) return;
+    busy = true; button.disabled = true; message('Comprobando…');
+    try {
+      const result = await api('/api/login/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      await refreshSession();
+      busy = false;
+      if (result.purpose === 'link') {
+        shell(`<section class="entry"><p class="eyebrow">PHOTOWN</p><h1>Correo vinculado</h1><p></p><a class="button" href="/settings" data-route="/settings">Volver a Personalización</a></section>`);
+        root.querySelector('section p:not(.eyebrow)').textContent = `Ya puedes entrar desde cualquier dispositivo con ${result.email}.`;
+      } else navigate(authenticated ? (shot ? '/preview' : '/wall') : '/enter', true);
+    } catch (error) { message(error.message); }
+    finally { busy = false; button.disabled = false; }
+  };
+  if (token) {
+    // Keep the one-use token out of the address bar and history.
+    history.replaceState({}, '', '/login');
+    shell('<section class="entry"><p class="eyebrow">PHOTOWN</p><h1>Confirma tu acceso</h1><p>Pulsa el botón para continuar en este navegador.</p><button class="primary" id="confirm-login">Continuar</button><p id="message" class="message" role="alert"></p></section>');
+    root.querySelector('#confirm-login').onclick = event => finish({ token }, event.target);
+    return;
+  }
+  shell('<section class="entry"><p class="eyebrow">PHOTOWN</p><h1>Entrar con tu correo</h1><p>Funciona si ya vinculaste tu correo desde Personalización.</p><form id="login-email"><label for="login-address">Correo electrónico</label><input id="login-address" name="email" type="email" autocomplete="email" maxlength="254" required><button class="primary" type="submit">Enviarme un acceso</button></form><form id="login-code" hidden><label for="login-digits">Código de 6 números</label><input id="login-digits" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required><button class="primary" type="submit">Entrar</button></form><p id="message" class="message" role="status"></p><a class="secondary-link" href="/enter" data-route="/enter">Tengo un código de invitación</a></section>');
+  const emailForm = root.querySelector('#login-email'), codeForm = root.querySelector('#login-code');
+  emailForm.onsubmit = async event => {
+    event.preventDefault(); const button = emailForm.querySelector('button'); button.disabled = true; message('Enviando…');
+    try {
+      await api('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: emailForm.elements.email.value }) });
+      message('Si ese correo está vinculado, te hemos enviado un enlace y un código. Revisa tu bandeja de entrada.');
+      codeForm.hidden = false; codeForm.elements.code.focus();
+    } catch (error) { message(error.message); }
+    finally { button.disabled = false; }
+  };
+  codeForm.onsubmit = event => {
+    event.preventDefault();
+    finish({ purpose: 'login', email: emailForm.elements.email.value, code: codeForm.elements.code.value }, codeForm.querySelector('button'));
+  };
 }
 const cameraErrors = {
   NotAllowedError: 'Permite el acceso a la cámara en los ajustes de este sitio y vuelve a intentar.',
@@ -260,6 +299,7 @@ function render() {
     shell(`<section class="entry"><h1 class="wordmark">PHOTOWN</h1><p class="intro">Un diario fotográfico compartido.</p><button class="primary" id="enter">Entrar</button><button type="button" data-install>Instalar app</button><a class="secondary-link" href="/admin" data-route="/admin">Administración</a></section>`);
     document.querySelector('#enter').addEventListener('click', () => navigate(authenticated ? '/wall' : '/enter'));
   } else if (path === '/enter') entryForm(Boolean(shot));
+  else if (path === '/login') loginPage();
   else if (path === '/admin/wall') ui.gallery(version, false, new URLSearchParams(location.search).get('group') || 'invalid');
   else if (path === '/admin') renderAdmin({ root, api, shell, current: () => version === renderVersion, confirmDeletion });
   else if (['/camera','/preview','/my-photos','/wall','/settings'].includes(path)) {

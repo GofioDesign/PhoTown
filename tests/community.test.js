@@ -16,6 +16,7 @@ function env() {
   sqlite.exec(readFileSync(new URL('../db/migrations/0004_profile_avatars.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../db/migrations/0005_core_v6.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../db/migrations/0006_identity_ownership.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../db/migrations/0007_email_login.sql', import.meta.url), 'utf8'));
   const db = { withSession() { return this; }, prepare(sql) {
     let args = [];
     return { bind(...values) { args = values.map(value => Array.isArray(value) ? new Uint8Array(value) : value); return this; },
@@ -360,4 +361,65 @@ test('ownership transfer is atomic and superadmin can only bootstrap an ownerles
   assert.equal((await roles(e, 'default', second, 'DELETE', { email: 'first@example.com' })).status, 200);
   const reasons = e.sqlite.prepare("SELECT reason FROM role_events WHERE group_id='default' ORDER BY rowid").all().map(row => row.reason);
   assert.deepEqual(reasons, ['owner_bootstrap', 'role_assigned', 'ownership_transferred', 'ownership_transferred', 'role_removed']);
+});
+
+const cookiesFrom = response => response.headers.getSetCookie().map(v => v.split(';')[0]).join('; ');
+const lastCode = e => /(\d{3}) (\d{3})/.exec(e.MAIL_OUTBOX.at(-1).subject).slice(1).join('');
+const lastToken = e => /\/login\?token=([a-f0-9]{64})/.exec(e.MAIL_OUTBOX.at(-1).text)[1];
+
+test('a participant links an email from YO and signs in with it on another device', async () => {
+  const e = env(); e.MAIL_OUTBOX = [];
+  const a = await join(e), id = crypto.randomUUID(); await upload(e, a, id);
+  const identity = (await (await call(e, '/api/session', 'GET', a)).json()).identity;
+  assert.equal((await call(e, '/api/account/email', 'POST', a, { email: 'Ana.Perez@gmail.com' })).status, 200);
+  assert.equal(e.MAIL_OUTBOX.at(-1).to, 'Ana.Perez@gmail.com');
+  assert.equal(e.MAIL_OUTBOX.at(-1).from, 'PhoTown <acceso@photown.gofiodesign.eu>');
+  const code = lastCode(e);
+  assert.equal((await call(e, '/api/login/verify', 'POST', a, { purpose: 'link', email: 'Ana.Perez@gmail.com', code: code === '000000' ? '111111' : '000000' })).status, 401);
+  const linked = await call(e, '/api/login/verify', 'POST', a, { purpose: 'link', email: 'anaperez@gmail.com', code });
+  assert.equal(linked.status, 200);
+  assert.deepEqual(await linked.json(), { purpose: 'link', linked: true, email: 'Ana.Perez@gmail.com' });
+  assert.equal((await (await call(e, '/api/session', 'GET', a)).json()).email, 'Ana.Perez@gmail.com');
+  assert.equal((await call(e, '/api/account/email', 'POST', a, { email: 'other@example.com' })).status, 409);
+
+  assert.deepEqual(await (await call(e, '/api/login', 'POST', '', { email: 'nobody@example.com' })).json(), { sent: true });
+  const before = e.MAIL_OUTBOX.length;
+  assert.deepEqual(await (await call(e, '/api/login', 'POST', '', { email: 'ana.perez@gmail.com' })).json(), { sent: true });
+  assert.equal(e.MAIL_OUTBOX.length, before + 1);
+  const token = lastToken(e);
+  const signedIn = await call(e, '/api/login/verify', 'POST', '', { token });
+  assert.equal(signedIn.status, 200);
+  assert.equal((await signedIn.json()).authenticated, true);
+  const device = cookiesFrom(signedIn);
+  assert.equal((await (await call(e, '/api/session', 'GET', device)).json()).identity, identity);
+  assert.deepEqual((await (await call(e, '/api/library', 'GET', device)).json()).photos.map(photo => photo.id), [id]);
+  assert.equal((await (await call(e, '/api/session', 'GET', a)).json()).authenticated, true);
+  assert.equal((await call(e, '/api/login/verify', 'POST', '', { token })).status, 401);
+
+  await call(e, '/api/login', 'POST', '', { email: 'anaperez@gmail.com' });
+  const byCode = await call(e, '/api/login/verify', 'POST', '', { purpose: 'login', email: 'anaperez@gmail.com', code: lastCode(e) });
+  assert.equal((await (await call(e, '/api/session', 'GET', cookiesFrom(byCode))).json()).identity, identity);
+});
+
+test('email linking never merges accounts and only completes in the browser that asked', async () => {
+  const e = env(); e.MAIL_OUTBOX = [];
+  const a = await join(e), b = await join(e);
+  await call(e, '/api/account/email', 'POST', a, { email: 'shared@example.com' });
+  const token = lastToken(e);
+  assert.equal((await call(e, '/api/login/verify', 'POST', b, { token })).status, 403);
+  assert.equal((await call(e, '/api/login/verify', 'POST', '', { token })).status, 403);
+  assert.equal((await call(e, '/api/login/verify', 'POST', a, { token })).status, 200);
+  await call(e, '/api/account/email', 'POST', b, { email: 'Shared@Example.com' });
+  assert.equal((await call(e, '/api/login/verify', 'POST', b, { purpose: 'link', email: 'shared@example.com', code: lastCode(e) })).status, 409);
+  assert.equal(e.sqlite.prepare("SELECT COUNT(*) n FROM identity_providers WHERE provider='email'").get().n, 1);
+  assert.equal((await (await call(e, '/api/session', 'GET', b)).json()).email, null);
+});
+
+test('email requests are limited per address and fail clearly without a mail provider', async () => {
+  const e = env(), a = await join(e);
+  assert.equal((await call(e, '/api/account/email', 'POST', a, { email: 'ana@example.com' })).status, 503);
+  e.MAIL_OUTBOX = [];
+  assert.equal((await call(e, '/api/account/email', 'POST', a, { email: 'not-an-email' })).status, 400);
+  for (let i = 0; i < 4; i++) await call(e, '/api/account/email', 'POST', a, { email: 'ana@example.com' });
+  assert.equal(e.MAIL_OUTBOX.length, 2);
 });
