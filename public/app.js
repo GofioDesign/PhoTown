@@ -4,6 +4,7 @@ import { setupInstall } from './install.js';
 import { photoUI } from './photo-ui.js';
 import { GRIDS, gridName, gridSVG, fitOverlay } from './grids.js';
 import { clippingOverlay } from './clipping.js';
+import { exposurePanel } from './exposure.js';
 
 const root = document.querySelector('#app');
 let stream;
@@ -217,7 +218,7 @@ async function camera(version) {
   let grid = challenge && challenge.grid !== 'none' ? challenge.grid : stored('photown-grid', 'none');
   let orientation = Number(stored('photown-spiral', '0')) || 0;
   let clipped = stored('photown-clipping', 'on') === 'on';
-  shell(`<section class="camera-shell live-camera">${topbar('BLANCO Y NEGRO')}<h1 class="sr-only">Cámara</h1><div class="viewfinder" id="capture-area"><video id="camera" autoplay muted playsinline aria-label="Vista en directo de la cámara en blanco y negro"></video><div class="grid-holder" id="grid-holder"><canvas class="clipping-overlay" aria-hidden="true"></canvas><div class="grid-lines-holder"></div></div><p id="camera-message" class="camera-message" role="status">Abriendo la cámara…</p></div><div class="camera-tools">${challenges.length ? '<button id="challenge-button" aria-haspopup="dialog"></button>' : ''}<button id="grid-button" aria-haspopup="dialog"></button><button id="rotate-grid" hidden>Girar guía</button><button id="clipping-button" aria-pressed="${clipped}">Quemados</button></div><p class="clipping-legend" ${clipped ? '' : 'hidden'}><span class="swatch white"></span>Blanco 255 <span class="swatch black"></span>Negro 0</p><div class="controls"><button id="shutter" class="shutter" aria-label="Fotografiar" aria-describedby="capture-help" disabled></button><button id="retry-camera" hidden>Volver a abrir la cámara</button></div><p id="capture-help" class="note">Toca la imagen o pulsa Fotografiar para hacer la foto.</p><p id="message" class="message" role="alert"></p><p id="connection" class="connection" role="status"></p></section>`);
+  shell(`<section class="camera-shell live-camera">${topbar('BLANCO Y NEGRO')}<h1 class="sr-only">Cámara</h1><div class="viewfinder" id="capture-area"><video id="camera" autoplay muted playsinline aria-label="Vista en directo de la cámara en blanco y negro"></video><div class="grid-holder" id="grid-holder"><canvas class="clipping-overlay" aria-hidden="true"></canvas><div class="grid-lines-holder"></div></div><p id="camera-message" class="camera-message" role="status">Abriendo la cámara…</p></div><div class="camera-tools">${challenges.length ? '<button id="challenge-button" aria-haspopup="dialog"></button>' : ''}<button id="grid-button" aria-haspopup="dialog"></button><button id="rotate-grid" hidden>Girar guía</button><button id="clipping-button" aria-pressed="${clipped}">Quemados</button><button id="exposure-button" aria-expanded="false" aria-controls="exposure-panel" hidden>Exposición</button></div><div id="exposure-panel" class="exposure-panel" hidden></div><p class="clipping-legend" ${clipped ? '' : 'hidden'}><span class="swatch white"></span>Blanco 255 <span class="swatch black"></span>Negro 0</p><div class="controls"><button id="shutter" class="shutter" aria-label="Fotografiar" aria-describedby="capture-help" disabled></button><button id="retry-camera" hidden>Volver a abrir la cámara</button></div><p id="capture-help" class="note">Toca la imagen o pulsa Fotografiar para hacer la foto.</p><p id="message" class="message" role="alert"></p><p id="connection" class="connection" role="status"></p></section>`);
   connection();
   const video = document.querySelector('video');
   const shutter = document.querySelector('#shutter');
@@ -265,7 +266,7 @@ async function camera(version) {
     root.querySelector('.controls').append(fullscreen);
   }
   document.querySelector('.camera-shell').addEventListener('click', event => {
-    if (event.target.closest('button, a, input, select, textarea, label, nav, header, dialog, .camera-tools')) return;
+    if (event.target.closest('button, a, input, select, textarea, label, nav, header, dialog, .camera-tools, .exposure-panel')) return;
     if (!shutter.disabled) shutter.click();
   });
   retry.addEventListener('click', () => render());
@@ -295,6 +296,11 @@ async function camera(version) {
     const opened = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1920 } } });
     if (version !== renderVersion || document.hidden) { opened.getTracks().forEach(track => track.stop()); return; }
     stream = opened;
+    const exposureButton = root.querySelector('#exposure-button'), exposure = root.querySelector('#exposure-panel');
+    if (exposurePanel(stream.getVideoTracks()[0], exposure, text => message(text))) {
+      exposureButton.hidden = false;
+      exposureButton.onclick = () => { exposure.hidden = !exposure.hidden; exposureButton.setAttribute('aria-expanded', String(!exposure.hidden)); };
+    }
     video.srcObject = stream;
     await video.play();
     if (version !== renderVersion) return;
