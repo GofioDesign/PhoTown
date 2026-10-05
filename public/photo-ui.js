@@ -6,8 +6,11 @@ const paths = {
   group: '<circle cx="12" cy="7" r="3"/><circle cx="4" cy="10" r="2"/><circle cx="20" cy="10" r="2"/><path d="M6 22v-3a6 6 0 0 1 12 0v3ZM1 21v-3a4 4 0 0 1 4-4m18 7v-3a4 4 0 0 0-4-4"/>',
   download: '<path d="M12 2v13m-5-5 5 5 5-5M3 16v6h18v-6"/>',
   trash: '<path d="M3 6h18M9 6V3h6v3M5 6l1 16h12l1-16M10 10v8m4-8v8"/>',
-  close: '<path d="m5 5 14 14M19 5 5 19"/>'
+  close: '<path d="m5 5 14 14M19 5 5 19"/>',
+  rotate: '<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>'
 };
+const rotations = [0, 90, 180, 270];
+const rotated = (element, rotation) => { rotations.forEach(r => element.classList.toggle(`rot-${r}`, r === (rotation || 0))); return element; };
 const icon = name => `<svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths[name]}</svg>`;
 
 export function photoUI({ root, api, shell, navigate, state, current, confirmDeletion }) {
@@ -138,14 +141,14 @@ export function photoUI({ root, api, shell, navigate, state, current, confirmDel
     } catch (error) { if (current(version)) target.textContent = error.message; }
   }
   async function gallery(version, mine, adminGroup = null) {
-    shell(`<section class="wall-shell">${adminGroup ? '<header class="wall-header"><a class="brand" href="/admin" data-route="/admin">PHOTOWN</a><span id="class-name"></span><a class="button" href="/admin" data-route="/admin">Administración</a></header>' : header()}${!adminGroup && state().groups.length > 1 ? '<nav id="group-circles" aria-label="Tus grupos"></nav>' : ''}${mine ? '<section id="my-profile" class="my-profile" aria-label="Mi perfil"></section>' : ''}<h1 class="sr-only">${mine ? 'YO, mis fotografías' : 'Muro de ' + escape(state().name)}</h1><p id="message" class="wall-message" role="status">Cargando fotografías…</p><div id="photos" class="mosaic"></div><button id="more" class="load-more" hidden>Cargar más fotografías</button><div id="navigation">${adminGroup ? '' : navigation(mine)}</div></section>`);
+    shell(`<section class="wall-shell">${adminGroup ? '<header class="wall-header"><a class="brand" href="/admin" data-route="/admin">PHOTOWN</a><span id="class-name"></span><a class="button" href="/admin" data-route="/admin">Administración</a></header>' : header()}${!adminGroup && state().groups.length > 1 ? '<nav id="group-circles" aria-label="Tus grupos"></nav>' : ''}${mine ? '<div class="profile-row"><section id="my-profile" class="my-profile" aria-label="Mi perfil"></section><button id="start-selection" class="profile-select">Seleccionar</button></div>' : ''}<h1 class="sr-only">${mine ? 'YO, mis fotografías' : 'Muro de ' + escape(state().name)}</h1>${mine ? '' : '<section id="challenge-bar" aria-label="Retos de composición"></section>'}<p id="message" class="wall-message" role="status">Cargando fotografías…</p><div id="photos" class="mosaic"></div><button id="more" class="load-more" hidden>Cargar más fotografías</button><div id="navigation">${adminGroup ? '' : navigation(mine)}</div></section>`);
     bindGroup();
     if (mine) renderProfile(version);
     if (!adminGroup && state().groups.length > 1) {
       const circles = root.querySelector('#group-circles');
       for (const group of state().groups) {
         const button = document.createElement('button'); button.setAttribute('aria-label', group.name); button.setAttribute('aria-pressed', String(group.id === state().id));
-        button.innerHTML = `<span class="group-circle">${group.has_cover ? `<img src="/api/groups/${group.id}/cover" alt="">` : icon('group')}</span><span>${escape(group.name)}</span>`;
+        button.innerHTML = `<span class="group-circle rot-${Number(group.cover_rotation) || 0}">${group.has_cover ? `<img src="/api/groups/${group.id}/cover" alt="">` : icon('group')}</span><span>${escape(group.name)}</span>`;
         button.onclick = async () => {
           circles.querySelectorAll('button').forEach(control => control.disabled = true);
           try { await post('/api/groups/select', { group: group.id }); await state().refresh(); if (current(version)) navigate('/wall'); }
@@ -155,12 +158,15 @@ export function photoUI({ root, api, shell, navigate, state, current, confirmDel
         circles.append(button);
       }
     }
+    const startSelection = root.querySelector('#start-selection');
+    if (startSelection) startSelection.onclick = () => { selecting = true; update(); container.querySelector('.mosaic-tile')?.focus(); };
     const container = root.querySelector('#photos'), more = root.querySelector('#more'), report = text => { if (current(version)) root.querySelector('#message').textContent = text; };
-    const photos = new Map(), selected = new Set(); let selecting = mine && selectionRequested, working = false, cursor, loading = false;
+    const photos = new Map(), selected = new Set(); let selecting = mine && selectionRequested, working = false, cursor, loading = false, canRotate = false, challenge = '', challengesShown = false;
     selectionRequested = false;
     function selectionBar() {
       if (adminGroup) return;
       const nav = root.querySelector('#navigation');
+      const start = root.querySelector('#start-selection'); if (start) start.hidden = selecting;
       if (!selecting) {
         nav.innerHTML = navigation(mine);
         nav.querySelectorAll('[data-route]').forEach(el => el.onclick = event => { event.preventDefault(); navigate(el.dataset.route); });
@@ -207,8 +213,27 @@ export function photoUI({ root, api, shell, navigate, state, current, confirmDel
       finally { working = false; if (current(version)) selectionBar(); }
     }
     function showPhoto(photo, openAlt = false) {
-      const dialog = modal(`<img class="viewer-image"><div class="viewer-top"><button class="close-viewer" autofocus aria-label="Cerrar fotografía">${icon('close')}</button>${mine || photo.description ? '<button id="alt-toggle" aria-expanded="false" aria-controls="alt-panel">ALT</button>' : ''}</div>${!mine && (photo.alias || photo.has_avatar) ? '<p class="viewer-credit"></p>' : ''}${mine ? `<div class="viewer-bottom"><a class="button" href="/api/library/${photo.id}/download" download="photown-${photo.id}.webp" aria-label="Descargar fotografía">${icon('download')}</a><button id="delete-one" aria-label="Eliminar">${icon('trash')}</button></div><p class="viewer-context"></p>` : ''}<section id="alt-panel" class="alt-panel" hidden><button id="alt-close" aria-label="Cerrar descripción">×</button>${mine ? '<form><label for="description">Descripción de la imagen</label><textarea id="description" maxlength="500" rows="4" placeholder="Describe esta imagen…"></textarea><button>Guardar descripción</button></form>' : '<p class="description-text"></p>'}<p class="alt-message" role="status"></p></section><p class="viewer-message" role="status"></p>`, 'Fotografía a tamaño completo', 'photo-viewer');
-      const image = dialog.querySelector('img'); image.src = `/api/images/${photo.id}`; image.alt = photo.description || 'Fotografía en blanco y negro, sin descripción disponible.';
+      const dialog = modal(`<img class="viewer-image"><div class="viewer-top"><button class="close-viewer" autofocus aria-label="Cerrar fotografía">${icon('close')}</button>${mine || photo.description ? '<button id="alt-toggle" aria-expanded="false" aria-controls="alt-panel">ALT</button>' : ''}${canRotate && !mine ? `<button id="rotate-photo" aria-label="Girar 90 grados a la derecha">${icon('rotate')}</button>` : ''}</div>${photo.challenge_title ? '<p class="viewer-challenge"></p>' : ''}${!mine && (photo.alias || photo.has_avatar) ? '<p class="viewer-credit"></p>' : ''}${mine ? `<div class="viewer-bottom"><a class="button" data-download href="/api/library/${photo.id}/download" download="photown-${photo.id}.webp" aria-label="Descargar fotografía">${icon('download')}</a><button id="delete-one" aria-label="Eliminar">${icon('trash')}</button></div><p class="viewer-context"></p>` : ''}<section id="alt-panel" class="alt-panel" hidden><button id="alt-close" aria-label="Cerrar descripción">×</button>${mine ? '<form><label for="description">Descripción de la imagen</label><textarea id="description" maxlength="500" rows="4" placeholder="Describe esta imagen…"></textarea><button>Guardar descripción</button></form>' : '<p class="description-text"></p>'}<p class="alt-message" role="status"></p></section><p class="viewer-message" role="status"></p>`, 'Fotografía a tamaño completo', 'photo-viewer');
+      const image = rotated(dialog.querySelector('img'), photo.rotation); image.src = `/api/images/${photo.id}`; image.alt = photo.description || 'Fotografía en blanco y negro, sin descripción disponible.';
+      if (photo.challenge_title) dialog.querySelector('.viewer-challenge').textContent = `Reto · ${photo.challenge_title}`;
+      const rotate = dialog.querySelector('#rotate-photo');
+      if (rotate) {
+        // Show the turn at once and save only the final angle, so quick taps cost one request.
+        let saving, saved = photo.rotation || 0;
+        rotate.onclick = () => {
+          photo.rotation = ((photo.rotation || 0) + 90) % 360; rotated(image, photo.rotation);
+          const tile = container.querySelector(`[data-id="${photo.id}"]`); if (tile) rotated(tile, photo.rotation);
+          clearTimeout(saving);
+          saving = setTimeout(async () => {
+            const target = photo.rotation;
+            try { await post(`/api/admin/photos/${photo.id}/rotation`, { rotation: target }); saved = target; dialog.querySelector('.viewer-message').textContent = ''; }
+            catch (error) {
+              photo.rotation = saved; rotated(image, saved); if (tile) rotated(tile, saved);
+              dialog.querySelector('.viewer-message').textContent = error.message;
+            }
+          }, 700);
+        };
+      }
       if (!mine && (photo.alias || photo.has_avatar)) {
         const credit = dialog.querySelector('.viewer-credit');
         if (photo.has_avatar) { const avatar = document.createElement('img'); avatar.src = `/api/photo-avatar/${photo.id}`; avatar.alt = ''; credit.append(avatar); }
@@ -235,13 +260,14 @@ export function photoUI({ root, api, shell, navigate, state, current, confirmDel
           finally { button.disabled = false; }
         };
         dialog.querySelector('#delete-one').onclick = () => remove([photo], dialog);
+        bindDownload(dialog.querySelector('[data-download]'), photo, text => { dialog.querySelector('.viewer-message').textContent = text; });
       } else dialog.querySelector('.description-text').textContent = photo.description || '';
       if (openAlt) toggleAlt?.click();
     }
     function add(photo) {
       photos.set(photo.id, photo);
       const frame = document.createElement('article'); frame.className = 'photo-frame';
-      const tile = document.createElement('button'); tile.className = 'mosaic-tile'; tile.dataset.id = photo.id;
+      const tile = rotated(document.createElement('button'), photo.rotation); tile.classList.add('mosaic-tile'); tile.dataset.id = photo.id;
       const img = document.createElement('img'); img.src = `/api/images/${photo.id}`; img.alt = photo.description || 'Fotografía en blanco y negro, sin descripción disponible.'; img.loading = 'lazy'; img.decoding = 'async';
       tile.append(img);
       const unavailable = ['uploading','deleting'].includes(photo.status);
@@ -262,7 +288,7 @@ export function photoUI({ root, api, shell, navigate, state, current, confirmDel
       }
       frame.append(tile);
       if (!unavailable) {
-        if (mine || photo.description) {
+        if (!mine && photo.description) {
           const alt = document.createElement('button'); alt.className = 'tile-alt'; alt.textContent = 'ALT'; alt.setAttribute('aria-label', mine ? 'Editar descripción ALT' : 'Ver descripción ALT'); alt.onclick = () => showPhoto(photo, true); frame.append(alt);
         }
         if (!mine && (photo.alias || photo.has_avatar)) {
@@ -273,21 +299,54 @@ export function photoUI({ root, api, shell, navigate, state, current, confirmDel
         }
         if (mine) {
           const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.className = 'tile-select'; checkbox.setAttribute('aria-label', 'Seleccionar fotografía'); checkbox.onchange = () => toggle(photo); frame.append(checkbox);
-          const actions = document.createElement('div'); actions.className = 'tile-actions';
-          actions.innerHTML = `<a href="/api/library/${photo.id}/download" download="photown-${photo.id}.webp" aria-label="Descargar fotografía">${icon('download')}</a><button aria-label="Eliminar fotografía">${icon('trash')}</button>`;
-          actions.querySelector('button').onclick = () => remove([photo]); frame.append(actions);
+          if (photo.status !== 'published') { const badge = document.createElement('span'); badge.className = 'tile-status'; badge.textContent = labels[photo.status] || ''; frame.append(badge); }
         }
       }
       container.append(frame);
     }
+    function challengeBar(list) {
+      const bar = root.querySelector('#challenge-bar');
+      if (!bar || !current(version) || !list?.length) return;
+      bar.innerHTML = '<div class="challenge-chips" role="group" aria-label="Filtrar el muro por reto"></div><div class="challenge-detail" hidden><p class="challenge-prompt"></p></div>';
+      const chips = bar.querySelector('.challenge-chips'), detail = bar.querySelector('.challenge-detail');
+      const select = id => {
+        challenge = id; cursor = undefined; photos.clear(); container.replaceChildren();
+        chips.querySelectorAll('button').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.challenge === id)));
+        const item = list.find(entry => entry.id === id);
+        detail.hidden = !item;
+        if (item) {
+          detail.querySelector('.challenge-prompt').textContent = item.prompt || 'Sin consigna: interpreta el reto a tu manera.';
+          detail.querySelector('a')?.remove();
+          if (!adminGroup) { const join = document.createElement('a'); join.className = 'button'; join.href = `/camera?challenge=${item.id}`; join.textContent = 'Participar'; join.onclick = event => { event.preventDefault(); navigate(join.getAttribute('href')); }; detail.append(join); }
+        }
+        report('Cargando fotografías…'); load();
+      };
+      for (const item of [{ id: '', title: 'Todo' }, ...list]) {
+        const button = document.createElement('button'); button.dataset.challenge = item.id; button.textContent = item.title;
+        button.setAttribute('aria-pressed', String(item.id === challenge)); button.onclick = () => { if (!loading) select(item.id); };
+        chips.append(button);
+      }
+    }
+    function bindDownload(link, photo, say) {
+      // Originals keep their pixels; a moderator's turn is applied to the downloaded copy.
+      link.addEventListener('click', async event => {
+        if (!photo.rotation) return;
+        event.preventDefault();
+        try { const { downloadPhoto } = await import('./zip.js'); await downloadPhoto(photo); }
+        catch (error) { say(error.message); }
+      });
+    }
     async function load() {
       if (loading) return; loading = true; more.disabled = true;
       try {
-        const page = await api(`${adminGroup ? '/api/admin/groups/' + encodeURIComponent(adminGroup) + '/wall' : mine ? '/api/library' : '/api/wall'}${cursor ? '?before=' + encodeURIComponent(cursor) : ''}`);
+        const query = new URLSearchParams(); if (cursor) query.set('before', cursor); if (challenge) query.set('challenge', challenge);
+        const page = await api(`${adminGroup ? '/api/admin/groups/' + encodeURIComponent(adminGroup) + '/wall' : mine ? '/api/library' : '/api/wall'}${query.toString() ? '?' + query : ''}`);
         if (!current(version)) return;
+        canRotate = Boolean(page.can_rotate);
         if (adminGroup) root.querySelector('#class-name').textContent = page.group.name;
+        if (!mine && !challengesShown) { challengesShown = true; challengeBar(adminGroup ? page.challenges.filter(item => item.active) : (await api('/api/challenges').catch(() => ({ challenges: [] }))).challenges); }
         page.photos.forEach(photo => { if (!photos.has(photo.id)) add(photo); }); cursor = page.next; more.hidden = !cursor; more.textContent = 'Cargar más fotografías';
-        report(photos.size ? '' : mine ? 'Todavía no has enviado fotografías. Abre la cámara para empezar.' : 'El muro está esperando las primeras fotografías aprobadas.');
+        report(photos.size ? '' : mine ? 'Todavía no has enviado fotografías. Abre la cámara para empezar.' : challenge ? 'Este reto todavía no tiene fotografías en el muro.' : 'El muro está esperando las primeras fotografías aprobadas.');
         update();
       } catch (error) { if (!current(version)) return; report(error.message); more.hidden = false; more.textContent = 'Reintentar carga'; if (error.status === 401) navigate(adminGroup ? '/admin' : '/enter', true); }
       finally { loading = false; more.disabled = false; }

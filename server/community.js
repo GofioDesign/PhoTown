@@ -12,6 +12,40 @@ const emailPattern = /^[a-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0
 const now = () => new Date().toISOString();
 const roleLabels = { owner: 'Owner', admin: 'Admin', moderator: 'Moderator' };
 const operators = ['owner', 'admin'];
+const moderators = [...operators, 'moderator'];
+const grids = ['none', 'thirds', 'phi', 'spiral', 'diagonals', 'center'];
+// A Google admin session with a role in the photo's group, used alongside the participant cookie.
+async function groupModerator(request, env, db, groupId) {
+  const oauth = groupId ? await adminIdentity(request, env) : null;
+  const principal = oauth ? await ensureAdminPrincipal(db, oauth, adminEmails(env)) : null;
+  return groupAuthority(db, principal, groupId, moderators);
+}
+function challengeInput(body, partial = false) {
+  const values = {};
+  if (!partial || 'title' in (body || {})) {
+    if (typeof body?.title !== 'string' || !body.title.trim() || body.title.trim().length > 80) throw new HttpError(400, 'Escribe un título de reto de hasta 80 caracteres.');
+    values.title = body.title.trim();
+  }
+  if (!partial || 'prompt' in (body || {})) {
+    const prompt = body?.prompt ?? '';
+    if (typeof prompt !== 'string' || prompt.length > 1000) throw new HttpError(400, 'La consigna del reto debe tener como máximo 1000 caracteres.');
+    values.prompt = prompt.trim();
+  }
+  if (!partial || 'grid' in (body || {})) {
+    const grid = body?.grid ?? 'none';
+    if (!grids.includes(grid)) throw new HttpError(400, 'Guía de composición no válida.');
+    values.grid = grid;
+  }
+  if ('active' in (body || {})) {
+    if (typeof body.active !== 'boolean') throw new HttpError(400, 'Estado de reto no válido.');
+    values.active = Number(body.active);
+  }
+  if (partial && !Object.keys(values).length) throw new HttpError(400, 'No hay cambios que guardar.');
+  return values;
+}
+const challengeList = (db, groupId, activeOnly) => db.prepare(`SELECT c.id,c.title,c.prompt,c.grid,c.active,c.created_at,
+  (SELECT COUNT(*) FROM photos p WHERE p.challenge_id=c.id AND p.status='published') AS photos
+  FROM challenges c WHERE c.group_id=?${activeOnly ? ' AND c.active=1' : ''} ORDER BY c.active DESC,c.created_at DESC,c.id DESC LIMIT 100`).bind(groupId).all();
 async function ownerChange(change) {
   try { return await change(); }
   catch (error) { if (/UNIQUE/.test(String(error?.message))) throw new HttpError(409, 'El grupo ya tiene owner. Pide al owner actual que transfiera la propiedad.'); throw error; }
@@ -88,15 +122,19 @@ async function enter(request, env, db) {
   return json({ authenticated: true }, 200, headers);
 }
 async function listPhotos(db, where, bindings, url, library = false) {
-  const cursor = url.searchParams.get('before');
+  const cursor = url.searchParams.get('before'), challenge = url.searchParams.get('challenge');
   const args = [...bindings];
   let clause = where;
+  if (challenge) {
+    if (!uuid.test(challenge)) throw new HttpError(400, 'El reto no es válido.');
+    clause += ' AND challenge_id=?'; args.push(challenge);
+  }
   if (cursor) {
     let pair; try { pair = JSON.parse(atob(cursor)); } catch { throw new HttpError(400, 'La página solicitada no es válida.'); }
     if (!Array.isArray(pair) || pair.length !== 2 || !pair.every(v => typeof v === 'string' && v.length < 100)) throw new HttpError(400, 'La página solicitada no es válida.');
     clause += ' AND (created_at < ? OR (created_at = ? AND id < ?))'; args.push(pair[0], pair[0], pair[1]);
   }
-  const result = await db.prepare(`SELECT id,description,status,week,created_at,publisher_id,${library ? 'group_id,(SELECT name FROM groups WHERE groups.id=photos.group_id) AS group_name,' : ''}(EXISTS(SELECT 1 FROM profile_avatars a WHERE a.publisher_id=photos.publisher_id AND a.group_id=photos.group_id)) AS has_avatar,(SELECT alias FROM memberships WHERE memberships.publisher_id=photos.publisher_id AND memberships.group_id=photos.group_id) AS alias FROM photos WHERE ${clause} ORDER BY created_at DESC,id DESC LIMIT 25`).bind(...args).all();
+  const result = await db.prepare(`SELECT id,description,status,week,created_at,publisher_id,rotation,challenge_id,(SELECT title FROM challenges WHERE challenges.id=photos.challenge_id) AS challenge_title,${library ? 'group_id,(SELECT name FROM groups WHERE groups.id=photos.group_id) AS group_name,' : ''}(EXISTS(SELECT 1 FROM profile_avatars a WHERE a.publisher_id=photos.publisher_id AND a.group_id=photos.group_id)) AS has_avatar,(SELECT alias FROM memberships WHERE memberships.publisher_id=photos.publisher_id AND memberships.group_id=photos.group_id) AS alias FROM photos WHERE ${clause} ORDER BY created_at DESC,id DESC LIMIT 25`).bind(...args).all();
   const more = result.results.length > 24, photos = result.results.slice(0, 24), last = photos.at(-1);
   return { photos, next: more ? btoa(JSON.stringify([last.created_at, last.id])) : null };
 }
@@ -107,10 +145,17 @@ async function upload(request, env, db, user) {
   const id = request.headers.get('Idempotency-Key');
   if (!uuid.test(id || '')) throw new HttpError(400, 'No se reconoce el envío. Vuelve a fotografiar.');
   if (request.headers.get('Content-Type') !== 'image/webp') throw new HttpError(415, 'Solo se admiten fotografías WebP.');
+  const requestedChallenge = request.headers.get('X-Photown-Challenge');
+  let challenge = null;
+  if (requestedChallenge) {
+    if (!uuid.test(requestedChallenge)) throw new HttpError(400, 'El reto no es válido.');
+    challenge = await db.prepare('SELECT id FROM challenges WHERE id=? AND group_id=? AND active=1').bind(requestedChallenge, user.group_id).first();
+    if (!challenge) throw new HttpError(409, 'Este reto ya no está abierto. Envía la foto sin reto.');
+  }
   const image = sanitizeWebP(await boundedBody(request, 5 * 1024 * 1024)), hash = await digest(image.bytes);
   const key = `groups/${user.group_id}/photos/${id}.webp`;
   const createdAt = now();
-  const created = await db.prepare("INSERT OR IGNORE INTO photos (id,publisher_id,group_id,image_key,sha256,status,week,created_at,user_id,par_id,origin_type,storage_bytes) VALUES (?,?,?,?,?,'uploading',?,?,?,?,'group',?)").bind(id, user.publisher_id, user.group_id, key, hash, photoWeek(), createdAt, user.user_id, user.par_id, image.bytes.byteLength).run();
+  const created = await db.prepare("INSERT OR IGNORE INTO photos (id,publisher_id,group_id,image_key,sha256,status,week,created_at,user_id,par_id,origin_type,storage_bytes,challenge_id) VALUES (?,?,?,?,?,'uploading',?,?,?,?,'group',?,?)").bind(id, user.publisher_id, user.group_id, key, hash, photoWeek(), createdAt, user.user_id, user.par_id, image.bytes.byteLength, challenge?.id ?? null).run();
   const photo = await db.prepare('SELECT * FROM photos WHERE id=?').bind(id).first();
   if (['deleted', 'deleting'].includes(photo.status)) throw new HttpError(410, 'Esta fotografía se ha borrado y no se puede reenviar.');
   if (photo.publisher_id !== user.publisher_id || photo.group_id !== user.group_id || photo.sha256 !== hash) throw new HttpError(409, 'Este envío corresponde a otra fotografía.');
@@ -130,7 +175,7 @@ export async function erasePhoto(env, db, photo, owner) {
   if (owner && !withdrawn.meta.changes) throw new HttpError(404, 'La fotografía ya no está disponible entre tus fotos.');
   await env.PHOTOS.delete(photo.image_key);
   // Keep only a tombstone/key to prevent upload replay and clean up late writers.
-  await db.prepare("UPDATE photos SET status='deleted',publisher_id=NULL,user_id=NULL,par_id=NULL,group_id=NULL,sha256=NULL,description='',week=NULL,published_at=NULL,storage_bytes=0,cleaned_at=? WHERE id=?").bind(now(), photo.id).run();
+  await db.prepare("UPDATE photos SET status='deleted',publisher_id=NULL,user_id=NULL,par_id=NULL,group_id=NULL,sha256=NULL,description='',week=NULL,published_at=NULL,storage_bytes=0,challenge_id=NULL,rotation=0,cleaned_at=? WHERE id=?").bind(now(), photo.id).run();
 }
 export async function cleanupDeleted(env) {
   if (!env.DB) return;
@@ -201,7 +246,7 @@ async function adminRoutes(request, env, db, url) {
       return json({ id, code }, 201);
     }
   }
-  const groupAction = /^\/api\/admin\/groups\/([a-z0-9-]+)\/(invitation|active|photos|publishers|wall|admins)$/.exec(url.pathname);
+  const groupAction = /^\/api\/admin\/groups\/([a-z0-9-]+)\/(invitation|active|photos|publishers|wall|admins|challenges)$/.exec(url.pathname);
   if (groupAction) {
     const [, group, action] = groupAction;
     requireSelectedGroup(group);
@@ -249,10 +294,38 @@ async function adminRoutes(request, env, db, url) {
     if (action === 'wall' && request.method === 'GET') {
       const page = await listPhotos(db, "group_id=? AND status='published'", [group], url);
       page.photos.forEach(photo => { delete photo.publisher_id; });
-      return json({ ...page, group: await db.prepare('SELECT id,name FROM groups WHERE id=?').bind(group).first() });
+      return json({ ...page, can_rotate: true, challenges: (await challengeList(db, group, false)).results, group: await db.prepare('SELECT id,name FROM groups WHERE id=?').bind(group).first() });
+    }
+    if (action === 'challenges' && request.method === 'GET') return json({ challenges: (await challengeList(db, group, false)).results });
+    if (action === 'challenges' && request.method === 'POST') {
+      const values = challengeInput(await bodyJSON(request)), id = crypto.randomUUID();
+      await db.prepare('INSERT INTO challenges (id,group_id,title,prompt,grid,active,created_by_user_id,created_at) VALUES (?,?,?,?,?,1,?,?)').bind(id, group, values.title, values.prompt, values.grid, admin.user_id, now()).run();
+      return json({ id }, 201);
     }
     if (action === 'photos' && request.method === 'GET') return json(await listPhotos(db, "group_id=? AND status IN ('pending','published','hidden')", [group], url));
     if (action === 'publishers' && request.method === 'GET') return json({ publishers: (await db.prepare('SELECT m.publisher_id,m.status,p.created_at,p.last_seen FROM memberships m JOIN publishers p ON p.id=m.publisher_id WHERE m.group_id=? ORDER BY p.created_at LIMIT 200').bind(group).all()).results });
+  }
+  const rotation = /^\/api\/admin\/photos\/([a-f0-9-]+)\/rotation$/.exec(url.pathname);
+  if (rotation && request.method === 'POST') {
+    // Moderators may straighten photos; the image bytes stay untouched.
+    const photo = await db.prepare("SELECT id,group_id FROM photos WHERE id=? AND status IN ('pending','published','hidden')").bind(rotation[1]).first();
+    if (!photo) throw new HttpError(404, 'No se encuentra la fotografía.');
+    requireSelectedGroup(photo.group_id);
+    await requireGroupAuthority(db, admin, photo.group_id, moderators);
+    const body = await bodyJSON(request);
+    if (![0, 90, 180, 270].includes(body?.rotation)) throw new HttpError(400, 'Giro no válido.');
+    await db.prepare("UPDATE photos SET rotation=? WHERE id=? AND status IN ('pending','published','hidden')").bind(body.rotation, photo.id).run();
+    return json({ rotation: body.rotation });
+  }
+  const challengeAction = /^\/api\/admin\/challenges\/([a-f0-9-]+)$/.exec(url.pathname);
+  if (challengeAction && request.method === 'POST') {
+    const challenge = await db.prepare('SELECT id,group_id FROM challenges WHERE id=?').bind(challengeAction[1]).first();
+    if (!challenge) throw new HttpError(404, 'No se encuentra el reto.');
+    requireSelectedGroup(challenge.group_id);
+    await requireGroupAuthority(db, admin, challenge.group_id, operators);
+    const values = challengeInput(await bodyJSON(request), true), keys = Object.keys(values);
+    await db.prepare(`UPDATE challenges SET ${keys.map(key => `${key}=?`).join(',')} WHERE id=?`).bind(...keys.map(key => values[key]), challenge.id).run();
+    return json({ ok: true });
   }
   const photoAction = /^\/api\/admin\/photos\/([a-f0-9-]+)\/(approve|hide|trust|delete)$/.exec(url.pathname);
   if (photoAction && request.method === 'POST') {
@@ -344,9 +417,7 @@ export async function communityRoute(request, env) {
   const avatarMatch = /^\/api\/photo-avatar\/([a-f0-9-]+)$/.exec(path);
   if (avatarMatch && request.method === 'GET') {
     const photo = await db.prepare("SELECT * FROM photos WHERE id=? AND status IN ('pending','published','hidden')").bind(avatarMatch[1]).first();
-    const oauth = photo ? await adminIdentity(request, env) : null;
-    const principal = oauth ? await ensureAdminPrincipal(db, oauth, adminEmails(env)) : null;
-    const administrative = photo && await groupAuthority(db, principal, photo.group_id, ['owner','admin','moderator']);
+    const administrative = photo && await groupModerator(request, env, db, photo.group_id);
     const allowed = photo && ((user && (photo.user_id === user.user_id || (photo.group_id === user.group_id && photo.status === 'published'))) || administrative);
     if (!allowed) throw new HttpError(404, 'No se encuentra la imagen de perfil.');
     const avatar = await db.prepare('SELECT image FROM profile_avatars WHERE publisher_id=? AND group_id=?').bind(photo.publisher_id, photo.group_id).first();
@@ -356,9 +427,7 @@ export async function communityRoute(request, env) {
   const imageMatch = /^\/api\/images\/([a-f0-9-]+)$/.exec(path);
   if (imageMatch && request.method === 'GET') {
     const photo = await db.prepare("SELECT * FROM photos WHERE id=? AND status IN ('pending','published','hidden')").bind(imageMatch[1]).first();
-    const oauth = photo ? await adminIdentity(request, env) : null;
-    const principal = oauth ? await ensureAdminPrincipal(db, oauth, adminEmails(env)) : null;
-    const administrative = photo && await groupAuthority(db, principal, photo.group_id, ['owner','admin','moderator']);
+    const administrative = photo && await groupModerator(request, env, db, photo.group_id);
     const allowed = photo && ((user && (photo.user_id === user.user_id || (photo.group_id === user.group_id && photo.status === 'published'))) || administrative);
     if (!allowed) throw new HttpError(404, 'No se encuentra la fotografía.');
     const object = await env.PHOTOS.get(photo.image_key);
@@ -399,7 +468,8 @@ export async function communityRoute(request, env) {
   }
   if (path === '/api/groups' && request.method === 'GET') return json({ groups: (await db.prepare(`SELECT g.id,g.name,
     CASE WHEN gm.state='blocked' THEN 'BLOCKED' WHEN gm.trust=1 THEN 'TRUSTED' ELSE 'MODERATED' END AS status,
-    EXISTS(SELECT 1 FROM photos WHERE photos.group_id=g.id AND photos.status='published') AS has_cover
+    EXISTS(SELECT 1 FROM photos WHERE photos.group_id=g.id AND photos.status='published') AS has_cover,
+    COALESCE((SELECT rotation FROM photos WHERE photos.group_id=g.id AND photos.status='published' ORDER BY created_at DESC,id DESC LIMIT 1),0) AS cover_rotation
     FROM group_memberships gm JOIN groups g ON g.id=gm.group_id
     WHERE gm.user_id=? AND gm.state NOT IN ('blocked','left') AND g.active=1 ORDER BY g.name,g.id`).bind(user.user_id).all()).results });
   if (path === '/api/groups/select' && request.method === 'POST') {
@@ -429,8 +499,10 @@ export async function communityRoute(request, env) {
   if (path === '/api/my-photos' && request.method === 'GET') return json(await listPhotos(db, "group_id=? AND publisher_id=? AND status NOT IN ('deleted')", [user.group_id, user.publisher_id], url));
   if (path === '/api/wall' && request.method === 'GET') {
     const page = await listPhotos(db, "group_id=? AND status='published'", [user.group_id], url);
-    page.photos.forEach(photo => { delete photo.publisher_id; }); return json(page);
+    page.photos.forEach(photo => { delete photo.publisher_id; });
+    return json({ ...page, can_rotate: Boolean(await groupModerator(request, env, db, user.group_id)) });
   }
+  if (path === '/api/challenges' && request.method === 'GET') return json({ challenges: (await challengeList(db, user.group_id, true)).results });
   const own = /^\/api\/(?:my-photos|library)\/([a-f0-9-]+)(\/description|\/download)?$/.exec(path);
   if (own) {
     if (request.method === 'DELETE' && (await db.prepare("SELECT id FROM photos WHERE id=? AND status='deleted'").bind(own[1]).first())) return json({ deleted: true });

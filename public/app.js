@@ -2,6 +2,8 @@ import { capture } from './processing.js';
 import { renderAdmin } from './admin.js';
 import { setupInstall } from './install.js';
 import { photoUI } from './photo-ui.js';
+import { GRIDS, gridName, gridSVG, fitOverlay } from './grids.js';
+import { clippingOverlay } from './clipping.js';
 
 const root = document.querySelector('#app');
 let stream;
@@ -165,13 +167,69 @@ const cameraErrors = {
   SecurityError: 'El navegador ha bloqueado la cámara. Revisa los permisos del sitio.',
   AbortError: 'Se interrumpió la cámara. Vuelve a intentar.'
 };
+const stored = (key, fallback) => { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } };
+const store = (key, value) => { try { localStorage.setItem(key, value); } catch { /* private mode */ } };
+function picker(title, options, choose) {
+  const previous = document.activeElement, dialog = document.createElement('dialog');
+  dialog.className = 'grid-picker'; dialog.setAttribute('aria-label', title);
+  dialog.innerHTML = '<h2></h2><div class="grid-options"></div><form method="dialog"><button>Cerrar</button></form>';
+  dialog.querySelector('h2').textContent = title;
+  for (const option of options) {
+    const button = document.createElement('button'); button.type = 'button'; button.setAttribute('aria-pressed', String(option.selected));
+    button.innerHTML = '<span class="grid-option-name"></span><span class="note"></span>';
+    button.querySelector('.grid-option-name').textContent = option.name; button.querySelector('.note').textContent = option.hint || '';
+    button.onclick = () => { choose(option.id); dialog.close(); };
+    dialog.querySelector('.grid-options').append(button);
+  }
+  dialog.addEventListener('close', () => { dialog.remove(); previous?.focus(); }, { once: true });
+  root.append(dialog); dialog.showModal();
+}
 async function camera(version) {
-  shell(`<section class="camera-shell live-camera">${topbar('BLANCO Y NEGRO')}<h1 class="sr-only">Cámara</h1><div class="viewfinder" id="capture-area"><video id="camera" autoplay muted playsinline aria-label="Vista en directo de la cámara en blanco y negro"></video><p id="camera-message" class="camera-message" role="status">Abriendo la cámara…</p></div><div class="controls"><button id="shutter" class="shutter" aria-label="Fotografiar" aria-describedby="capture-help" disabled></button><button id="retry-camera" hidden>Volver a abrir la cámara</button></div><p id="capture-help" class="note">Toca la imagen o pulsa Fotografiar para hacer la foto.</p><p id="message" class="message" role="alert"></p><p id="connection" class="connection" role="status"></p></section>`);
+  let challenges = [];
+  try { challenges = (await api('/api/challenges')).challenges; } catch { /* The camera works without challenges. */ }
+  if (version !== renderVersion) return;
+  let challenge = challenges.find(item => item.id === new URLSearchParams(location.search).get('challenge'));
+  let grid = challenge && challenge.grid !== 'none' ? challenge.grid : stored('photown-grid', 'none');
+  let orientation = Number(stored('photown-spiral', '0')) || 0;
+  let clipped = stored('photown-clipping', 'on') === 'on';
+  shell(`<section class="camera-shell live-camera">${topbar('BLANCO Y NEGRO')}<h1 class="sr-only">Cámara</h1><div class="viewfinder" id="capture-area"><video id="camera" autoplay muted playsinline aria-label="Vista en directo de la cámara en blanco y negro"></video><div class="grid-holder" id="grid-holder"><canvas class="clipping-overlay" aria-hidden="true"></canvas><div class="grid-lines-holder"></div></div><p id="camera-message" class="camera-message" role="status">Abriendo la cámara…</p></div><div class="camera-tools">${challenges.length ? '<button id="challenge-button" aria-haspopup="dialog"></button>' : ''}<button id="grid-button" aria-haspopup="dialog"></button><button id="rotate-grid" hidden>Girar guía</button><button id="clipping-button" aria-pressed="${clipped}">Quemados</button></div><p class="clipping-legend" ${clipped ? '' : 'hidden'}><span class="swatch white"></span>Blanco 255 <span class="swatch black"></span>Negro 0</p><div class="controls"><button id="shutter" class="shutter" aria-label="Fotografiar" aria-describedby="capture-help" disabled></button><button id="retry-camera" hidden>Volver a abrir la cámara</button></div><p id="capture-help" class="note">Toca la imagen o pulsa Fotografiar para hacer la foto.</p><p id="message" class="message" role="alert"></p><p id="connection" class="connection" role="status"></p></section>`);
   connection();
   const video = document.querySelector('video');
   const shutter = document.querySelector('#shutter');
   const retry = document.querySelector('#retry-camera');
   root.querySelector('#capture-area').append(root.querySelector('.controls'));
+  const area = root.querySelector('#capture-area'), holder = root.querySelector('#grid-holder'), lines = holder.querySelector('.grid-lines-holder');
+  const gridButton = root.querySelector('#grid-button'), rotate = root.querySelector('#rotate-grid'), challengeButton = root.querySelector('#challenge-button');
+  const clippingButton = root.querySelector('#clipping-button'), legend = root.querySelector('.clipping-legend');
+  const overlay = clippingOverlay(video, holder.querySelector('canvas'), () => version === renderVersion);
+  overlay.enabled = clipped;
+  const drawGrid = () => {
+    const shown = fitOverlay(area, video, holder);
+    lines.innerHTML = shown ? gridSVG(grid, shown.width, shown.height, orientation) : '';
+    gridButton.textContent = `Guía: ${gridName(grid)}`;
+    gridButton.setAttribute('aria-label', `Guía de composición: ${gridName(grid)}. Cambiar guía`);
+    rotate.hidden = grid !== 'spiral';
+    if (challengeButton) { challengeButton.textContent = challenge ? `Reto: ${challenge.title}` : 'Sin reto'; challengeButton.setAttribute('aria-label', `${challenge ? 'Reto ' + challenge.title : 'Sin reto'}. Cambiar reto`); }
+  };
+  const observer = new ResizeObserver(drawGrid); observer.observe(area);
+  video.addEventListener('loadedmetadata', drawGrid);
+  addEventListener('pagehide', () => observer.disconnect(), { once: true });
+  rotate.onclick = () => { orientation = (orientation + 1) % 4; store('photown-spiral', String(orientation)); drawGrid(); };
+  gridButton.onclick = () => picker('Guía de composición', GRIDS.map(option => ({ ...option, selected: option.id === grid })), id => { grid = id; if (!challenge) store('photown-grid', grid); drawGrid(); });
+  clippingButton.onclick = () => {
+    clipped = !clipped; overlay.enabled = clipped; store('photown-clipping', clipped ? 'on' : 'off');
+    clippingButton.setAttribute('aria-pressed', String(clipped)); legend.hidden = !clipped;
+  };
+  if (challengeButton) challengeButton.onclick = () => picker('Reto de composición', [
+    { id: '', name: 'Sin reto', hint: 'La foto va al muro sin reto.', selected: !challenge },
+    ...challenges.map(item => ({ id: item.id, name: item.title, hint: `${item.prompt ? item.prompt + ' · ' : ''}Guía: ${gridName(item.grid)}`, selected: item.id === challenge?.id }))
+  ], id => {
+    challenge = challenges.find(item => item.id === id);
+    if (challenge && challenge.grid !== 'none') grid = challenge.grid;
+    history.replaceState({}, '', challenge ? `/camera?challenge=${challenge.id}` : '/camera');
+    drawGrid();
+  });
+  drawGrid();
   if (document.fullscreenEnabled) {
     const fullscreen = document.createElement('button'); fullscreen.id = 'fullscreen'; fullscreen.type = 'button'; fullscreen.textContent = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa';
     fullscreen.setAttribute('aria-label', fullscreen.textContent);
@@ -182,7 +240,7 @@ async function camera(version) {
     root.querySelector('.controls').append(fullscreen);
   }
   document.querySelector('.camera-shell').addEventListener('click', event => {
-    if (event.target.closest('button, a, input, select, textarea, label, nav, header, dialog')) return;
+    if (event.target.closest('button, a, input, select, textarea, label, nav, header, dialog, .camera-tools')) return;
     if (!shutter.disabled) shutter.click();
   });
   retry.addEventListener('click', () => render());
@@ -196,6 +254,8 @@ async function camera(version) {
       if (version !== renderVersion) return;
       captured.groupId = groupId;
       captured.groupName = groupName;
+      captured.challenge = challenge?.id || null;
+      captured.challengeTitle = challenge?.title || '';
       clearShot();
       shot = captured;
       shotUrl = URL.createObjectURL(shot.blob);
@@ -215,6 +275,7 @@ async function camera(version) {
     if (version !== renderVersion) return;
     message('', '#camera-message');
     shutter.disabled = false;
+    drawGrid();
     for (const track of stream.getVideoTracks()) track.addEventListener('ended', () => {
       if (version !== renderVersion) return;
       shutter.disabled = true;
@@ -236,11 +297,18 @@ function preview() {
   destination.className = 'destination-context';
   destination.textContent = `Grupo de origen: ${shot.groupName || groupName}`;
   root.querySelector('.controls').before(destination);
+  if (shot.challenge) {
+    const label = document.createElement('label'); label.className = 'challenge-toggle';
+    label.innerHTML = '<input type="checkbox" id="for-challenge" checked> <span></span>';
+    label.querySelector('span').textContent = `Para el reto «${shot.challengeTitle}»`;
+    destination.after(label);
+  }
   connection();
   document.querySelector('#again').addEventListener('click', () => {
     if (busy) return;
+    const again = shot?.challenge ? `/camera?challenge=${shot.challenge}` : '/camera';
     clearShot();
-    navigate('/camera', true);
+    navigate(again, true);
   });
   document.querySelector('#publish').addEventListener('click', async () => {
     if (busy || !shot) return;
@@ -249,7 +317,7 @@ function preview() {
     buttons.forEach(button => button.disabled = true);
     message('Enviando fotografía…');
     try {
-      const result = await api('/api/photos', { method: 'POST', headers: { 'Content-Type': 'image/webp', 'Idempotency-Key': shot.id, 'X-Photown-Group': shot.groupId || groupId }, body: shot.blob });
+      const result = await api('/api/photos', { method: 'POST', headers: { 'Content-Type': 'image/webp', 'Idempotency-Key': shot.id, 'X-Photown-Group': shot.groupId || groupId, ...(shot.challenge && root.querySelector('#for-challenge')?.checked ? { 'X-Photown-Challenge': shot.challenge } : {}) }, body: shot.blob });
       const pending = result.status === 'pending';
       clearShot();
       busy = false;

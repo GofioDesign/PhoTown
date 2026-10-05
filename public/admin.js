@@ -1,3 +1,4 @@
+import { GRIDS, gridName, gridIcon } from './grids.js';
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels = { pending: 'Pendiente', published: 'Publicada', hidden: 'Oculta' };
 const roleNames = { owner: 'Owner', admin: 'Admin', moderator: 'Moderator' };
@@ -117,7 +118,7 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
   async function details(group) {
     const version = ++detailVersion;
     const target = root.querySelector('#group-detail');
-    target.innerHTML = `<h2 tabindex="-1">${escape(group.name)}</h2><p class="detail-message" role="status">Cargando…</p><div class="photo-grid"></div><button class="more" hidden>Cargar más fotografías</button><h3>Roles del grupo</h3><div class="group-admins"></div><div class="role-forms"></div><p class="roles-status" role="status"></p><h3>Participantes</h3><div class="members"></div>`;
+    target.innerHTML = `<h2 tabindex="-1">${escape(group.name)}</h2><p class="detail-message" role="status">Cargando…</p><div class="photo-grid"></div><button class="more" hidden>Cargar más fotografías</button><h3>Retos de composición</h3><div class="challenges"></div><form class="challenge-form"><h4>Nuevo reto</h4><label for="challenge-title">Título</label><input id="challenge-title" name="title" maxlength="80" required><label for="challenge-prompt">Consigna (opcional)</label><textarea id="challenge-prompt" name="prompt" maxlength="1000" rows="3"></textarea><label for="challenge-grid">Guía de composición en la cámara</label><select id="challenge-grid" name="grid">${GRIDS.map(grid => `<option value="${grid.id}">${escape(grid.name)}</option>`).join('')}</select><button class="primary" type="submit">Crear reto</button></form><p class="challenges-status" role="status"></p><h3>Roles del grupo</h3><div class="group-admins"></div><div class="role-forms"></div><p class="roles-status" role="status"></p><h3>Participantes</h3><div class="members"></div>`;
     target.querySelector('h2').focus();
     let cursor, loading = false;
     const valid = () => current() && version === detailVersion;
@@ -131,9 +132,16 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
         const grid = target.querySelector('.photo-grid');
         for (const photo of response.photos) {
           const card = document.createElement('article'); card.className = 'photo-card';
-          card.innerHTML = `<img loading="lazy" src="/api/images/${photo.id}" alt="${escape(photo.description || 'Fotografía sin descripción disponible')}"><p>${escape(labels[photo.status])}</p><button data-action="approve">Aprobar</button><button data-action="hide">Ocultar</button><button data-action="trust">Aprobar y confiar</button><button data-action="delete">Borrar definitivamente</button><p role="status"></p>`;
+          card.innerHTML = `<img loading="lazy" class="rot-${photo.rotation || 0}" src="/api/images/${photo.id}" alt="${escape(photo.description || 'Fotografía sin descripción disponible')}"><p>${escape(labels[photo.status])}${photo.challenge_title ? ' · Reto ' + escape(photo.challenge_title) : ''}</p><button data-action="rotate">Girar 90°</button><button data-action="approve">Aprobar</button><button data-action="hide">Ocultar</button><button data-action="trust">Aprobar y confiar</button><button data-action="delete">Borrar definitivamente</button><p role="status"></p>`;
           for (const button of card.querySelectorAll('button')) button.onclick = async () => {
             const action = button.dataset.action;
+            if (action === 'rotate') {
+              const next = ((photo.rotation || 0) + 90) % 360; button.disabled = true;
+              try { await post(`/api/admin/photos/${photo.id}/rotation`, { rotation: next }); photo.rotation = next; card.querySelector('img').className = `rot-${next}`; card.querySelector('[role=status]').textContent = ''; }
+              catch (error) { card.querySelector('[role=status]').textContent = error.message; }
+              finally { button.disabled = false; }
+              return;
+            }
             if (action === 'delete' && !(await confirmDeletion())) return;
             card.querySelectorAll('button').forEach(b => b.disabled = true);
             try { await post(`/api/admin/photos/${photo.id}/${action}`); await details(group); }
@@ -189,6 +197,44 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
           async element => { await post(`/api/admin/groups/${group.id}/admins`, { email: element.elements.email.value, role: 'owner' }); return 'Owner designado.'; });
       }
     };
+    const challengeStatus = target.querySelector('.challenges-status');
+    const challenges = async () => {
+      const response = await api(`/api/admin/groups/${group.id}/challenges`); if (!valid()) return;
+      const list = target.querySelector('.challenges'); list.replaceChildren();
+      if (!response.challenges.length) list.textContent = 'Todavía no hay retos. Crea el primero: aparecerá en la cámara y en el muro.';
+      for (const item of response.challenges) {
+        const row = document.createElement('article'); row.className = `member-row challenge-admin${item.active ? '' : ' closed'}`;
+        row.innerHTML = `${gridIcon(item.grid)}<div><h4></h4><p class="note"></p><p class="challenge-prompt"></p><button data-edit>Editar</button><button data-toggle>${item.active ? 'Cerrar reto' : 'Reabrir reto'}</button></div>`;
+        row.querySelector('h4').textContent = item.title;
+        row.querySelector('.note').textContent = `${item.active ? 'Abierto' : 'Cerrado'} · Guía: ${gridName(item.grid)} · ${item.photos} en el muro`;
+        row.querySelector('.challenge-prompt').textContent = item.prompt;
+        row.querySelector('[data-toggle]').onclick = async event => {
+          event.target.disabled = true;
+          try { await post(`/api/admin/challenges/${item.id}`, { active: !item.active }); await challenges(); challengeStatus.textContent = item.active ? 'Reto cerrado. Ya no aparece en la cámara.' : 'Reto reabierto.'; }
+          catch (error) { challengeStatus.textContent = error.message; event.target.disabled = false; }
+        };
+        row.querySelector('[data-edit]').onclick = () => {
+          const form = document.createElement('form'); form.className = 'challenge-form';
+          form.innerHTML = `<label>Título<input name="title" maxlength="80" required></label><label>Consigna (opcional)<textarea name="prompt" maxlength="1000" rows="3"></textarea></label><label>Guía de composición<select name="grid">${GRIDS.map(grid => `<option value="${grid.id}">${escape(grid.name)}</option>`).join('')}</select></label><button class="primary" type="submit">Guardar reto</button><button type="button" data-cancel>Cancelar</button>`;
+          form.elements.title.value = item.title; form.elements.prompt.value = item.prompt; form.elements.grid.value = item.grid;
+          form.querySelector('[data-cancel]').onclick = () => challenges();
+          form.onsubmit = async event => {
+            event.preventDefault(); form.querySelector('[type=submit]').disabled = true;
+            try { await post(`/api/admin/challenges/${item.id}`, { title: form.elements.title.value, prompt: form.elements.prompt.value, grid: form.elements.grid.value }); await challenges(); challengeStatus.textContent = 'Reto guardado.'; }
+            catch (error) { challengeStatus.textContent = error.message; form.querySelector('[type=submit]').disabled = false; }
+          };
+          row.querySelector('div').replaceChildren(form); form.elements.title.focus();
+        };
+        list.append(row);
+      }
+    };
+    target.querySelector('.challenge-form').onsubmit = async event => {
+      event.preventDefault(); const form = event.target, button = form.querySelector('button'); button.disabled = true;
+      try { await post(`/api/admin/groups/${group.id}/challenges`, { title: form.elements.title.value, prompt: form.elements.prompt.value, grid: form.elements.grid.value }); form.reset(); await challenges(); challengeStatus.textContent = 'Reto creado. Ya aparece en la cámara y en el muro del grupo.'; }
+      catch (error) { challengeStatus.textContent = error.message; }
+      finally { button.disabled = false; }
+    };
+    try { await challenges(); } catch (error) { if (valid()) target.querySelector('.challenges').textContent = error.message; }
     try { await roles(); } catch (error) { if (valid()) target.querySelector('.group-admins').textContent = error.message; }
     try {
       const response = await api(`/api/admin/groups/${group.id}/publishers`); if (!valid()) return;
