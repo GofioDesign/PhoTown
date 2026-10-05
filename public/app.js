@@ -168,7 +168,7 @@ async function invitePage() {
   const detail = root.querySelector('#invite-detail'), accept = root.querySelector('#accept-invite');
   try {
     const invitation = await api('/api/invitation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
-    detail.textContent = `Te han invitado a ${invitation.group}. Al unirte, ${invitation.email} quedará vinculado y podrás entrar desde cualquier dispositivo con «Entrar con mi correo».`;
+    detail.textContent = `Te han invitado al grupo «${invitation.group}». Al unirte, ${invitation.email} quedará vinculado y podrás entrar desde cualquier dispositivo con «Entrar con mi correo».`;
     accept.hidden = false;
   } catch (error) { detail.textContent = error.message; return; }
   accept.onclick = async () => {
