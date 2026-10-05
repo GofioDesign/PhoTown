@@ -218,7 +218,7 @@ async function camera(version) {
   let grid = challenge && challenge.grid !== 'none' ? challenge.grid : stored('photown-grid', 'none');
   let orientation = Number(stored('photown-spiral', '0')) || 0;
   let clipped = stored('photown-clipping', 'on') === 'on';
-  shell(`<section class="camera-shell live-camera">${topbar('BLANCO Y NEGRO')}<h1 class="sr-only">Cámara</h1><div class="viewfinder" id="capture-area"><video id="camera" autoplay muted playsinline aria-label="Vista en directo de la cámara en blanco y negro"></video><div class="grid-holder" id="grid-holder"><canvas class="clipping-overlay" aria-hidden="true"></canvas><div class="grid-lines-holder"></div></div><p id="camera-message" class="camera-message" role="status">Abriendo la cámara…</p></div><div class="camera-tools">${challenges.length ? '<button id="challenge-button" aria-haspopup="dialog"></button>' : ''}<button id="grid-button" aria-haspopup="dialog"></button><button id="rotate-grid" hidden>Girar guía</button><button id="clipping-button" aria-pressed="${clipped}">Quemados</button><button id="exposure-button" aria-expanded="false" aria-controls="exposure-panel" hidden>Exposición</button></div><div id="exposure-panel" class="exposure-panel" hidden></div><p class="clipping-legend" ${clipped ? '' : 'hidden'}><span class="swatch white"></span>Blanco 255 <span class="swatch black"></span>Negro 0</p><div class="controls"><button id="shutter" class="shutter" aria-label="Fotografiar" aria-describedby="capture-help" disabled></button><button id="retry-camera" hidden>Volver a abrir la cámara</button></div><p id="capture-help" class="note">Toca la imagen o pulsa Fotografiar para hacer la foto.</p><p id="message" class="message" role="alert"></p><p id="connection" class="connection" role="status"></p></section>`);
+  shell(`<section class="camera-shell live-camera">${topbar('BLANCO Y NEGRO')}<h1 class="sr-only">Cámara</h1><div class="viewfinder" id="capture-area"><video id="camera" autoplay muted playsinline aria-label="Vista en directo de la cámara en blanco y negro"></video><div class="grid-holder" id="grid-holder"><canvas class="clipping-overlay" aria-hidden="true"></canvas><div class="grid-lines-holder"></div></div><p id="camera-message" class="camera-message" role="status">Abriendo la cámara…</p></div><div class="camera-tools">${challenges.length ? '<button id="challenge-button" aria-haspopup="dialog"></button>' : ''}<button id="grid-button" aria-haspopup="dialog"></button><button id="rotate-grid" hidden>Girar guía</button><button id="clipping-button" aria-pressed="${clipped}">Quemados</button><button id="exposure-button" aria-expanded="false" aria-controls="exposure-panel" hidden>Exposición</button><p class="clipping-legend" ${clipped ? '' : 'hidden'}><span class="swatch white"></span>Blanco 255 <span class="swatch black"></span>Negro 0</p></div><div id="exposure-panel" class="exposure-panel" hidden></div><div class="controls"><button id="shutter" class="shutter" aria-label="Fotografiar" aria-describedby="capture-help" disabled></button><button id="retry-camera" hidden>Volver a abrir la cámara</button></div><p id="capture-help" class="note">Toca la imagen o pulsa Fotografiar para hacer la foto.</p><p id="message" class="message" role="alert"></p><p id="connection" class="connection" role="status"></p></section>`);
   connection();
   const video = document.querySelector('video');
   const shutter = document.querySelector('#shutter');
@@ -296,14 +296,10 @@ async function camera(version) {
     const opened = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1920 } } });
     if (version !== renderVersion || document.hidden) { opened.getTracks().forEach(track => track.stop()); return; }
     stream = opened;
-    const exposureButton = root.querySelector('#exposure-button'), exposure = root.querySelector('#exposure-panel');
-    if (exposurePanel(stream.getVideoTracks()[0], exposure, text => message(text))) {
-      exposureButton.hidden = false;
-      exposureButton.onclick = () => { exposure.hidden = !exposure.hidden; exposureButton.setAttribute('aria-expanded', String(!exposure.hidden)); };
-    }
     video.srcObject = stream;
     await video.play();
     if (version !== renderVersion) return;
+    setupExposure(stream.getVideoTracks()[0], version);
     message('', '#camera-message');
     shutter.disabled = false;
     drawGrid();
@@ -319,6 +315,19 @@ async function camera(version) {
     message(cameraErrors[error.name] || error.message || 'No se pudo abrir la cámara. Vuelve a intentar.', '#camera-message');
     retry.hidden = false;
   }
+}
+// Chrome on Android fills in the camera's capabilities a moment after the stream starts, so ask a few times.
+async function setupExposure(track, version) {
+  const button = root.querySelector('#exposure-button'), panel = root.querySelector('#exposure-panel');
+  if (!button || !panel || !track) return;
+  button.hidden = false;
+  button.onclick = () => { panel.hidden = !panel.hidden; button.setAttribute('aria-expanded', String(!panel.hidden)); };
+  for (const wait of [0, 500, 1500]) {
+    if (wait) await new Promise(resolve => setTimeout(resolve, wait));
+    if (version !== renderVersion || track.readyState !== 'live') return;
+    if (exposurePanel(track, panel, text => message(text))) return;
+  }
+  panel.innerHTML = '<p class="note">Este navegador o este móvil no permite ajustar la velocidad ni el ISO desde una web. Funciona en Chrome para Android cuando la cámara lo permite; en iPhone no es posible. La apertura (F) es fija en los móviles.</p>';
 }
 function preview() {
   if (!shot) { navigate('/camera', true); return; }

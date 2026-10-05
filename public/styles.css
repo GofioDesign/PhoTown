@@ -267,10 +267,10 @@ summary { cursor: pointer; min-height: 48px; padding: 14px 0; }
 .grid-shadow path, .grid-shadow circle { stroke: #000; stroke-opacity: .55; stroke-width: 3; }
 .grid-lines path, .grid-lines circle { stroke: #fff; stroke-opacity: .9; stroke-width: 1; }
 .grid-lines circle { fill: #fff; fill-opacity: .35; }
-.camera-tools { position: absolute; z-index: 4; top: calc(max(10px, env(safe-area-inset-top)) + 56px); left: 0; right: 0; display: flex; gap: 8px; padding: 0 12px; overflow-x: auto; scrollbar-width: none; }
+.camera-tools { position: absolute; z-index: 4; top: calc(max(10px, env(safe-area-inset-top)) + 56px); left: 0; right: 0; display: flex; flex-wrap: wrap; gap: 8px; padding: 0 12px; }
 .camera-tools button { flex: 0 0 auto; min-height: 40px; padding: 8px 14px; border-radius: 20px; border-color: #666; background: #000a; font-size: .8rem; white-space: nowrap; max-width: 60vw; overflow: hidden; text-overflow: ellipsis; }
 .camera-tools [aria-pressed=true] { background: #eee; color: #111; border-color: #eee; }
-.clipping-legend { position: absolute; z-index: 4; top: calc(max(10px, env(safe-area-inset-top)) + 104px); left: 12px; margin: 0; padding: 4px 10px; background: #000a; font-size: .72rem; line-height: 1.6; pointer-events: none; }
+.clipping-legend { align-self: center; margin: 0; padding: 4px 10px; background: #000a; font-size: .72rem; line-height: 1.6; pointer-events: none; }
 .swatch { display: inline-block; width: 10px; height: 10px; margin: 0 4px 0 2px; vertical-align: -1px; }
 .swatch.white { background: rgb(255,32,32); }
 .swatch.black { background: rgb(40,110,255); margin-left: 10px; }
