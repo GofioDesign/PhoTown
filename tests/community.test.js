@@ -17,6 +17,7 @@ function env() {
   sqlite.exec(readFileSync(new URL('../db/migrations/0005_core_v6.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../db/migrations/0006_identity_ownership.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../db/migrations/0007_email_login.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../db/migrations/0008_rotation_challenges.sql', import.meta.url), 'utf8'));
   const db = { withSession() { return this; }, prepare(sql) {
     let args = [];
     return { bind(...values) { args = values.map(value => Array.isArray(value) ? new Uint8Array(value) : value); return this; },
@@ -422,4 +423,51 @@ test('email requests are limited per address and fail clearly without a mail pro
   assert.equal((await call(e, '/api/account/email', 'POST', a, { email: 'not-an-email' })).status, 400);
   for (let i = 0; i < 4; i++) await call(e, '/api/account/email', 'POST', a, { email: 'ana@example.com' });
   assert.equal(e.MAIL_OUTBOX.length, 2);
+});
+
+test('moderators rotate group photos without touching the stored image; participants cannot', async () => {
+  const e = env(), a = await join(e), admin = await adminCookie(e), id = crypto.randomUUID();
+  await upload(e, a, id); await call(e, `/api/admin/photos/${id}/approve`, 'POST', admin);
+  const before = e.objects.get(`groups/default/photos/${id}.webp`);
+  assert.equal((await (await call(e, '/api/wall', 'GET', a)).json()).can_rotate, false);
+  assert.equal((await call(e, `/api/admin/photos/${id}/rotation`, 'POST', a, { rotation: 90 })).status, 401);
+  const owner = e.sqlite.prepare("SELECT user_id FROM identity_providers WHERE subject='google-subject'").get().user_id;
+  e.sqlite.prepare("INSERT INTO group_role_assignments (group_id,email,display_email,role,assigned_by_user_id,created_at) VALUES ('default','mod@example.com','mod@example.com','moderator',?,?)").run(owner, new Date().toISOString());
+  const moderator = await googleCookie(e, 'g-mod', 'mod@example.com');
+  assert.equal((await call(e, `/api/admin/photos/${id}/rotation`, 'POST', moderator, { rotation: 45 })).status, 400);
+  assert.equal((await call(e, `/api/admin/photos/${id}/rotation`, 'POST', moderator, { rotation: 90 })).status, 200);
+  assert.equal((await call(e, `/api/admin/photos/${id}/approve`, 'POST', moderator)).status, 403);
+  const wall = await (await call(e, '/api/wall', 'GET', a)).json();
+  assert.equal(wall.photos[0].rotation, 90);
+  assert.equal((await (await call(e, '/api/wall', 'GET', `${a}; ${moderator}`)).json()).can_rotate, true);
+  assert.equal(e.objects.get(`groups/default/photos/${id}.webp`), before);
+  const other = await (await call(e, '/api/admin/groups', 'POST', admin, { name: 'Otro' })).json(), outsider = await join(e, other.code), foreign = crypto.randomUUID();
+  await upload(e, outsider, foreign);
+  assert.equal((await call(e, `/api/admin/photos/${foreign}/rotation`, 'POST', moderator, { rotation: 180 })).status, 403);
+});
+
+test('admins configure composition challenges; photos join only open challenges of their group', async () => {
+  const e = env(), a = await join(e), admin = await adminCookie(e);
+  assert.equal((await call(e, '/api/admin/groups/default/challenges', 'POST', admin, { title: '', grid: 'thirds' })).status, 400);
+  assert.equal((await call(e, '/api/admin/groups/default/challenges', 'POST', admin, { title: 'Líneas', grid: 'hexagon' })).status, 400);
+  const { id } = await (await call(e, '/api/admin/groups/default/challenges', 'POST', admin, { title: 'Líneas', prompt: 'Busca diagonales', grid: 'diagonals' })).json();
+  assert.equal((await call(e, '/api/admin/groups/default/challenges', 'POST', a, { title: 'X' })).status, 401);
+  const listed = (await (await call(e, '/api/challenges', 'GET', a)).json()).challenges;
+  assert.deepEqual(listed.map(item => [item.title, item.grid, item.prompt]), [['Líneas', 'diagonals', 'Busca diagonales']]);
+  const photo = crypto.randomUUID();
+  const sent = await call(e, '/api/photos', 'POST', a, image(), { 'Content-Type': 'image/webp', 'Idempotency-Key': photo, 'X-Photown-Challenge': id });
+  assert.equal(sent.status, 201);
+  await call(e, `/api/admin/photos/${photo}/approve`, 'POST', admin); await upload(e, a).then(r => r.json()).then(r => call(e, `/api/admin/photos/${r.id}/approve`, 'POST', admin));
+  const filtered = await (await call(e, `/api/wall?challenge=${id}`, 'GET', a)).json();
+  assert.deepEqual(filtered.photos.map(p => [p.id, p.challenge_title]), [[photo, 'Líneas']]);
+  assert.equal((await (await call(e, '/api/wall', 'GET', a)).json()).photos.length, 2);
+  assert.equal((await call(e, `/api/admin/challenges/${id}`, 'POST', admin, { grid: 'spiral', active: false })).status, 200);
+  assert.deepEqual((await (await call(e, '/api/challenges', 'GET', a)).json()).challenges, []);
+  const closed = await call(e, '/api/photos', 'POST', a, image(), { 'Content-Type': 'image/webp', 'Idempotency-Key': crypto.randomUUID(), 'X-Photown-Challenge': id });
+  assert.equal(closed.status, 409);
+  const all = (await (await call(e, '/api/admin/groups/default/challenges', 'GET', admin)).json()).challenges;
+  assert.deepEqual(all.map(item => [item.grid, item.active, item.photos]), [['spiral', 0, 1]]);
+  const other = await (await call(e, '/api/admin/groups', 'POST', admin, { name: 'Otro' })).json(), outsider = await join(e, other.code);
+  await call(e, `/api/admin/challenges/${id}`, 'POST', admin, { active: true });
+  assert.equal((await call(e, '/api/photos', 'POST', outsider, image(), { 'Content-Type': 'image/webp', 'Idempotency-Key': crypto.randomUUID(), 'X-Photown-Challenge': id })).status, 409);
 });

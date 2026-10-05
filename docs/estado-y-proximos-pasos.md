@@ -73,6 +73,14 @@ Decidido el 1 de octubre de 2026: se añade la entrada con enlace mágico por co
 - Envío con un proveedor gratuito al principio (decidido el 4 de octubre de 2026): Resend por defecto, con Brevo como alternativa. Cloudflare Email Sending exige el plan Workers Paid para enviar a cualquier dirección. El Worker llama a la API del proveedor con `fetch`; la clave va como secreto (`RESEND_API_KEY`) y el dominio verificado en Resend es el subdominio `photown.gofiodesign.eu` (registros DNS que pide el proveedor). El remitente será `PhoTown <acceso@photown.gofiodesign.eu>`, configurable con la variable `MAIL_FROM`. El envío queda aislado en `server/mail.js` para poder cambiar de proveedor sin tocar el resto.
 - Implementado el 5 de octubre de 2026 (migración `0007_email_login.sql`, `server/email-login.js`): quien participa vincula su correo desde Personalización con un código o enlace que solo vale en el mismo navegador. Después entra con «Entrar con mi correo» en cualquier dispositivo y recupera su mismo USER, sus fotos y sus grupos; cada dispositivo tiene su propia sesión de un año. Un correo ya vinculado a otro USER no se fusiona: se informa del conflicto y no cambia nada. La entrada administrativa sigue siendo con Google, y la coincidencia con una identidad Google llegará con la vinculación de Google desde YO.
 
+#### Giro, retos y zonas quemadas (5 de octubre de 2026)
+
+- Migración `0008_rotation_challenges.sql`: `photos.rotation` (0/90/180/270), tabla `challenges` y `photos.challenge_id`.
+- Girar: owner, admin y moderator del grupo, desde el visor del muro (con su sesión de Google abierta) o desde Gestionar grupo. El giro es solo de presentación; el archivo en R2 no cambia y las descargas se giran en el navegador.
+- Retos: owner y admin los crean, editan, cierran y reabren en Gestionar grupo, con una guía de composición (tercios, proporción áurea, espiral, diagonales, centro). Aparecen en la cámara y como filtro en el muro.
+- Cámara: botón «Quemados» que marca en rojo los píxeles a 255 y en azul los de 0. Solo superpuesto, nunca se guarda en la foto.
+- Muro y YO en rejilla cuadrada uniforme de 3 columnas.
+
 ### 5. Cámara móvil y accesibilidad
 
 - Alternar cámara frontal y trasera manteniendo el BN, la orientación y el espejo de la frontal.
