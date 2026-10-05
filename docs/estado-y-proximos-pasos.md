@@ -87,6 +87,11 @@ Decidido el 1 de octubre de 2026: se añade la entrada con enlace mágico por co
 - Cada persona recibe un enlace de un solo uso que caduca en 7 días (`/invite`). Al aceptarlo entra en el grupo y su correo queda vinculado, así que después puede usar «Entrar con mi correo». Si el correo ya pertenece a un USER, el enlace abre ese mismo USER en el dispositivo.
 - La invitación con código sigue funcionando igual.
 
+#### Exposición manual en la cámara (5 de octubre de 2026)
+
+- Botón «Exposición» en la cámara, solo si el navegador expone el control (Chrome en Android, según el móvil): Manual con velocidad e ISO en pasos fotográficos, o Auto con compensación ±EV. Usa `applyConstraints` sobre la pista de vídeo (`public/exposure.js`).
+- Safari en iPhone no permite estos ajustes desde una web: allí no aparece el botón. La apertura F es fija en los móviles.
+
 ### 5. Cámara móvil y accesibilidad
 
 - Alternar cámara frontal y trasera manteniendo el BN, la orientación y el espejo de la frontal.
