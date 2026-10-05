@@ -1,5 +1,6 @@
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels = { pending: 'Pendiente', published: 'Publicada', hidden: 'Oculta' };
+const roleNames = { owner: 'Owner', admin: 'Admin', moderator: 'Moderator' };
 
 export async function renderAdmin({ root, api, shell, current, confirmDeletion }) {
   shell('<section class="gallery-shell"><a class="brand" href="/" data-route="/">PHOTOWN</a><h1>Administración</h1><p role="status">Comprobando acceso…</p></section>');
@@ -33,7 +34,7 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
     return rawApi(path, { ...options, headers });
   };
   const isSuperadmin = context.type === 'superadmin';
-  const createGroup = isSuperadmin ? `<form id="create-group"><label for="group-name">Nombre del nuevo grupo</label><input id="group-name" maxlength="80" required><label for="group-admin-email">Correo OAuth del admin inicial</label><input id="group-admin-email" name="admin_email" type="email" maxlength="254" required value="${escape(session.email)}"><button class="primary" type="submit">Crear grupo</button></form>` : '';
+  const createGroup = isSuperadmin ? `<form id="create-group"><label for="group-name">Nombre del nuevo grupo</label><input id="group-name" maxlength="80" required><label for="group-admin-email">Correo OAuth del owner inicial</label><input id="group-admin-email" name="owner_email" type="email" maxlength="254" required value="${escape(session.email)}"><button class="primary" type="submit">Crear grupo</button></form>` : '';
   shell(`<section class="gallery-shell"><a class="brand" href="/" data-route="/">PHOTOWN</a><h1>${isSuperadmin ? 'Administración global' : escape(context.label)}</h1><p>${escape(session.email)}</p>${contexts.length > 1 ? '<a class="button" href="/admin">Cambiar rol</a>' : ''}<button id="logout">Cerrar sesión de administración</button>${createGroup}<p id="admin-message" role="status"></p><div id="new-invitation"></div><div id="groups" class="group-grid"></div><section id="group-detail" aria-label="Contenido del grupo"></section></section>`);
   const waiting = isSuperadmin ? document.createElement('section') : null;
   if (waiting) {
@@ -94,7 +95,7 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
     for (const group of response.groups) {
       const card = document.createElement('article'); card.className = 'admin-row';
       const scopedContext = context.type === 'group' ? `&context=${encodeURIComponent(context.key)}` : '';
-      const canManage = context.type !== 'group' || context.role === 'admin';
+      const canManage = context.type !== 'group' || ['owner', 'admin'].includes(context.role);
       const manageControls = canManage ? `<button data-action="manage">Gestionar grupo</button><button data-action="invitation">Generar nueva invitación</button><button data-action="active">${group.active ? 'Cerrar grupo' : 'Abrir grupo'}</button>` : '';
       card.innerHTML = `<h2>${escape(group.name)}</h2><p>${group.active ? 'Grupo abierto' : 'Grupo cerrado'}</p><a class="button" href="/admin/wall?group=${encodeURIComponent(group.id)}${scopedContext}">Muro</a>${manageControls}<div class="invitation-result"></div><p class="group-status" role="status"></p>`;
       if (!canManage) { list.append(card); continue; }
@@ -116,7 +117,7 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
   async function details(group) {
     const version = ++detailVersion;
     const target = root.querySelector('#group-detail');
-    target.innerHTML = `<h2 tabindex="-1">${escape(group.name)}</h2><p class="detail-message" role="status">Cargando…</p><div class="photo-grid"></div><button class="more" hidden>Cargar más fotografías</button><h3>Administración del grupo</h3><form id="assign-admin"><label for="assigned-email">Correo OAuth</label><input id="assigned-email" name="email" type="email" maxlength="254" required><label for="assigned-role">Rol</label><select id="assigned-role" name="role"><option value="admin">Admin</option><option value="moderator">Moderator</option></select><button type="submit">Asignar acceso</button><p role="status"></p></form><div class="group-admins"></div><h3>Participantes</h3><div class="members"></div>`;
+    target.innerHTML = `<h2 tabindex="-1">${escape(group.name)}</h2><p class="detail-message" role="status">Cargando…</p><div class="photo-grid"></div><button class="more" hidden>Cargar más fotografías</button><h3>Roles del grupo</h3><div class="group-admins"></div><div class="role-forms"></div><p class="roles-status" role="status"></p><h3>Participantes</h3><div class="members"></div>`;
     target.querySelector('h2').focus();
     let cursor, loading = false;
     const valid = () => current() && version === detailVersion;
@@ -148,29 +149,47 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
     };
     target.querySelector('.more').onclick = load;
     await load();
-    try {
+    const roles = async () => {
       const response = await api(`/api/admin/groups/${group.id}/admins`); if (!valid()) return;
-      const assigned = target.querySelector('.group-admins');
-      const drawAdmins = admins => {
-        assigned.replaceChildren();
-        for (const item of admins) {
-          const row = document.createElement('p');
-          row.textContent = `${item.email} · ${item.role}${item.claimed_user_id ? ' · vinculado' : ' · pendiente de primer acceso'}`;
-          assigned.append(row);
+      const assigned = target.querySelector('.group-admins'), forms = target.querySelector('.role-forms'), status = target.querySelector('.roles-status');
+      assigned.replaceChildren(); forms.replaceChildren();
+      for (const item of response.admins) {
+        const row = document.createElement('div'); row.className = 'member-row';
+        const text = document.createElement('p');
+        text.textContent = `${item.email} · ${roleNames[item.role]}${item.claimed_user_id ? ' · vinculado' : ' · pendiente de primer acceso'}`;
+        row.append(text);
+        if (response.can_manage_roles && item.role !== 'owner') {
+          const remove = document.createElement('button'); remove.textContent = `Retirar rol a ${item.email}`;
+          remove.onclick = async () => {
+            remove.disabled = true;
+            try { await api(`/api/admin/groups/${group.id}/admins`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: item.key }) }); await roles(); status.textContent = 'Rol retirado.'; }
+            catch (error) { status.textContent = error.message; remove.disabled = false; }
+          };
+          row.append(remove);
         }
-        if (!admins.length) assigned.textContent = 'No hay cuentas administrativas asignadas.';
+        assigned.append(row);
+      }
+      if (!response.admins.length) assigned.textContent = 'No hay cuentas con rol en este grupo.';
+      if (!response.has_owner) { const note = document.createElement('p'); note.textContent = 'Este grupo todavía no tiene owner.'; assigned.prepend(note); }
+      const form = (html, submit) => {
+        const element = document.createElement('form'); element.innerHTML = html; forms.append(element);
+        element.onsubmit = async event => {
+          event.preventDefault(); const button = element.querySelector('button'); button.disabled = true;
+          try { const message = await submit(element); await roles(); status.textContent = message; }
+          catch (error) { status.textContent = error.message; button.disabled = false; }
+        };
       };
-      drawAdmins(response.admins);
-      const form = target.querySelector('#assign-admin');
-      form.onsubmit = async event => {
-        event.preventDefault(); const button = form.querySelector('button'); button.disabled = true;
-        try {
-          await post(`/api/admin/groups/${group.id}/admins`, { email: form.elements.email.value, role: form.elements.role.value });
-          const refreshed = await api(`/api/admin/groups/${group.id}/admins`); drawAdmins(refreshed.admins); form.reset(); form.querySelector('[role=status]').textContent = 'Acceso asignado.';
-        } catch (error) { form.querySelector('[role=status]').textContent = error.message; }
-        finally { button.disabled = false; }
-      };
-    } catch (error) { if (valid()) target.querySelector('.group-admins').textContent = error.message; }
+      if (response.can_manage_roles) {
+        form('<h4>Asignar rol</h4><label for="assigned-email">Correo OAuth</label><input id="assigned-email" name="email" type="email" maxlength="254" required><label for="assigned-role">Rol</label><select id="assigned-role" name="role"><option value="admin">Admin</option><option value="moderator">Moderator</option></select><button type="submit">Asignar rol</button>',
+          async element => { await post(`/api/admin/groups/${group.id}/admins`, { email: element.elements.email.value, role: element.elements.role.value }); return 'Rol asignado.'; });
+        form('<h4>Transferir propiedad</h4><p>La nueva cuenta pasa a ser owner y tú quedas como admin.</p><label for="transfer-email">Correo OAuth del nuevo owner</label><input id="transfer-email" name="email" type="email" maxlength="254" required><label><input type="checkbox" required> Entiendo que dejaré de gestionar los roles de este grupo.</label><button type="submit">Transferir propiedad</button>',
+          async element => { await post(`/api/admin/groups/${group.id}/admins`, { email: element.elements.email.value, role: 'owner' }); location.href = '/admin'; return 'Propiedad transferida.'; });
+      } else if (response.can_bootstrap_owner) {
+        form('<h4>Designar owner</h4><p>Solo puede hacerse una vez. Después, los cambios los hace el owner con una transferencia.</p><label for="owner-email">Correo OAuth del owner</label><input id="owner-email" name="email" type="email" maxlength="254" required><button type="submit">Designar owner</button>',
+          async element => { await post(`/api/admin/groups/${group.id}/admins`, { email: element.elements.email.value, role: 'owner' }); return 'Owner designado.'; });
+      }
+    };
+    try { await roles(); } catch (error) { if (valid()) target.querySelector('.group-admins').textContent = error.message; }
     try {
       const response = await api(`/api/admin/groups/${group.id}/publishers`); if (!valid()) return;
       const list = target.querySelector('.members');
@@ -208,7 +227,7 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
   }
   if (isSuperadmin) root.querySelector('#create-group').onsubmit = async event => {
     event.preventDefault(); const button = event.target.querySelector('button'); button.disabled = true;
-    try { const result = await post('/api/admin/groups', { name: event.target.querySelector('#group-name').value, admin_email: event.target.elements.admin_email.value }); invitation(root.querySelector('#new-invitation'), result.code); event.target.reset(); event.target.elements.admin_email.value = session.email; await groups(); report('Grupo creado.'); }
+    try { const result = await post('/api/admin/groups', { name: event.target.querySelector('#group-name').value, owner_email: event.target.elements.owner_email.value }); invitation(root.querySelector('#new-invitation'), result.code); event.target.reset(); event.target.elements.owner_email.value = session.email; await groups(); report('Grupo creado.'); }
     catch (error) { report(error.message); } finally { button.disabled = false; }
   };
   root.querySelector('#logout').onclick = async () => {

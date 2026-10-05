@@ -198,7 +198,7 @@ test('admin can create group, rotate invitation, moderate and block participants
   await page.locator('.admin-row').filter({ has: page.getByRole('heading', { name, exact: true }) }).getByRole('button', { name: 'Gestionar grupo' }).click();
   await page.getByLabel('Identidad anterior', { exact: true }).selectOption(oldIdentity);
   await page.getByLabel('Nueva identidad', { exact: true }).fill(newIdentity);
-  await page.getByRole('checkbox').check();
+  await page.getByRole('checkbox', { name: /ambas identidades/ }).check();
   await page.getByRole('button', { name: 'Reasignar fotografías', exact: true }).click();
   await expect(page.getByText('1 fotografías reasignadas.', { exact: false })).toBeVisible();
   await page.goto('/my-photos'); await expect(page.locator('.mosaic-tile')).toHaveCount(1);
@@ -400,8 +400,8 @@ test('YO profile photo, direct card controls and administrator classroom wall', 
   const secret = /^SESSION_SECRET=(.+)$/m.exec(readFileSync('.dev.vars','utf8'))[1].trim();
   const token = await signToken({SESSION_SECRET:secret},{sub:'local-class-'+crypto.randomUUID(),email:adminEmail},'admin',600);
   await context.addCookies([{name:'photown_admin',value:token,domain:'localhost',path:'/',httpOnly:true,sameSite:'Strict'}]);
-  // v6: superadmin needs its own admin role in the default group to moderate it.
-  expect((await page.request.post('/api/admin/groups/default/admins',{headers:{Origin:'http://localhost:8787'},data:{email:adminEmail,role:'admin'}})).status()).toBe(200);
+  // v6: superadmin needs its own group role to moderate; it may only designate the first owner.
+  expect((await page.request.post('/api/admin/groups/default/admins',{headers:{Origin:'http://localhost:8787'},data:{email:adminEmail,role:'owner'}})).status()).toBe(200);
   const photo = (await (await page.request.get('/api/library')).json()).photos[0];
   expect((await page.request.post(`/api/admin/photos/${photo.id}/approve`,{headers:{Origin:'http://localhost:8787'}})).status()).toBe(200);
   await page.goto('/wall');

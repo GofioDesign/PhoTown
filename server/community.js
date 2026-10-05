@@ -2,12 +2,19 @@ import { digest, HttpError, boundedBody, requireSameOrigin } from './security.js
 import { cookieValue, cookieHeader, randomToken, invitationCode, signToken, verifyToken } from './tokens.js';
 import { googleStart, googleCallback, googleReady, adminIdentity, adminEmails } from './google-auth.js';
 import { sanitizeWebP } from './webp.js';
-import { addPhotoToCurrentWall, createInitialWall, ensureAdminPrincipal, ensureGroupMembership, ensureLocalUser, groupAuthority, requireGroupAuthority } from './core-v6.js';
+import { addPhotoToCurrentWall, assignGroupRole, createInitialWall, ensureAdminPrincipal, ensureGroupMembership, ensureLocalUser, groupAuthority, groupOwner, removeGroupRole, requireGroupAuthority, setGroupOwner } from './core-v6.js';
+import { canonicalEmail } from './identity.js';
 
 const json = (data, status = 200, headers = {}) => Response.json(data, { status, headers });
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const emailPattern = /^[a-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/;
 const now = () => new Date().toISOString();
+const roleLabels = { owner: 'Owner', admin: 'Admin', moderator: 'Moderator' };
+const operators = ['owner', 'admin'];
+async function ownerChange(change) {
+  try { return await change(); }
+  catch (error) { if (/UNIQUE/.test(String(error?.message))) throw new HttpError(409, 'El grupo ya tiene owner. Pide al owner actual que transfiera la propiedad.'); throw error; }
+}
 async function bodyJSON(request, limit = 4096) {
   try { return JSON.parse(new TextDecoder().decode(await boundedBody(request, limit))); }
   catch (error) { if (error instanceof HttpError) throw error; throw new HttpError(400, 'Revisa los datos y vuelve a intentar.'); }
@@ -132,12 +139,12 @@ async function adminRoutes(request, env, db, url) {
   const identity = await adminIdentity(request, env);
   const admin = identity ? await ensureAdminPrincipal(db, identity, adminEmails(env)) : null;
   const groupContexts = admin ? (await db.prepare(`SELECT g.id,g.name,gm.role FROM group_memberships gm JOIN groups g ON g.id=gm.group_id
-    WHERE gm.user_id=? AND gm.role IN ('admin','moderator') AND gm.state='active' ORDER BY g.name,g.id`).bind(admin.user_id).all()).results : [];
+    WHERE gm.user_id=? AND gm.role IN ('owner','admin','moderator') AND gm.state='active' ORDER BY g.name,g.id`).bind(admin.user_id).all()).results : [];
   const contexts = admin ? [
     ...(admin.superadmin ? [{ type: 'superadmin', key: 'superadmin', label: 'Superadmin' }] : []),
-    ...groupContexts.map(group => ({ type: 'group', key: group.id, group_id: group.id, group_name: group.name, role: group.role, label: `${group.role === 'admin' ? 'Admin' : 'Moderator'} · ${group.name}` }))
+    ...groupContexts.map(group => ({ type: 'group', key: group.id, group_id: group.id, group_name: group.name, role: group.role, label: `${roleLabels[group.role]} · ${group.name}` }))
   ] : [];
-  if (url.pathname === '/api/admin/session' && request.method === 'GET') return json({ authenticated: Boolean(admin), email: admin?.email, configured: googleReady(env), contexts });
+  if (url.pathname === '/api/admin/session' && request.method === 'GET') return json({ authenticated: Boolean(admin), email: admin?.display_email || admin?.email, configured: googleReady(env), contexts });
   if (!admin) throw new HttpError(401, 'Entra con una cuenta de Google autorizada.');
   const requestedGroup = request.headers.get('X-Photown-Admin-Group');
   if (requestedGroup && !/^[a-z0-9-]+$/.test(requestedGroup)) throw new HttpError(400, 'El contexto administrativo no es válido.');
@@ -173,20 +180,19 @@ async function adminRoutes(request, env, db, url) {
         ? (await db.prepare('SELECT id,name,active,created_at FROM groups ORDER BY created_at DESC,id DESC').all()).results
         : groupContext
           ? (await db.prepare('SELECT id,name,active,created_at FROM groups WHERE id=?').bind(groupContext.id).all()).results
-        : (await db.prepare("SELECT g.id,g.name,g.active,g.created_at FROM group_memberships gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=? AND gm.role IN ('admin','moderator') AND gm.state='active' ORDER BY g.created_at DESC,g.id DESC").bind(admin.user_id).all()).results;
+        : (await db.prepare("SELECT g.id,g.name,g.active,g.created_at FROM group_memberships gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=? AND gm.role IN ('owner','admin','moderator') AND gm.state='active' ORDER BY g.created_at DESC,g.id DESC").bind(admin.user_id).all()).results;
       return json({ groups });
     }
     if (request.method === 'POST') {
       if (!superadminContext) throw new HttpError(403, 'Solo superadmin puede crear grupos.');
       const body = await bodyJSON(request);
       if (typeof body?.name !== 'string' || !body.name.trim() || body.name.length > 80) throw new HttpError(400, 'Escribe un nombre de grupo de hasta 80 caracteres.');
-      const initialAdmin = typeof body?.admin_email === 'string' && body.admin_email.trim() ? body.admin_email.trim().toLowerCase() : admin.email;
-      if (!emailPattern.test(initialAdmin)) throw new HttpError(400, 'Indica el correo OAuth del admin inicial.');
+      const requested = [body?.owner_email, body?.admin_email].find(value => typeof value === 'string' && value.trim());
+      const initialOwner = requested ? requested.trim() : (admin.display_email || admin.email);
+      if (!emailPattern.test(initialOwner.toLowerCase())) throw new HttpError(400, 'Indica el correo OAuth del owner inicial.');
       const id = crypto.randomUUID(), code = invitationCode();
-      const timestamp = now();
-      await db.prepare('INSERT INTO groups (id,name,invite_hash,created_at) VALUES (?,?,?,?)').bind(id, body.name.trim(), await digest(code), timestamp).run();
-      await db.prepare("INSERT INTO group_role_assignments (group_id,email,role,assigned_by_user_id,claimed_user_id,created_at) VALUES (?,?,'admin',?,?,?)").bind(id, initialAdmin, admin.user_id, initialAdmin === admin.email ? admin.user_id : null, timestamp).run();
-      if (initialAdmin === admin.email) await db.prepare("INSERT INTO group_memberships (user_id,group_id,par_id,role,state,trust,joined_at) VALUES (?,?,?,'admin','active',0,?)").bind(admin.user_id, id, crypto.randomUUID(), timestamp).run();
+      await db.prepare('INSERT INTO groups (id,name,invite_hash,created_at) VALUES (?,?,?,?)').bind(id, body.name.trim(), await digest(code), now()).run();
+      await setGroupOwner(db, admin.user_id, id, initialOwner, { claimedUserId: canonicalEmail(initialOwner) === admin.email ? admin.user_id : null });
       await createInitialWall(db, id, body.name.trim());
       return json({ id, code }, 201);
     }
@@ -196,20 +202,36 @@ async function adminRoutes(request, env, db, url) {
     const [, group, action] = groupAction;
     requireSelectedGroup(group);
     if (!(await db.prepare('SELECT id FROM groups WHERE id=?').bind(group).first())) throw new HttpError(404, 'No se encuentra el grupo.');
-    if (!(action === 'admins' && superadminContext)) await requireGroupAuthority(db, admin, group, action === 'wall' ? ['admin','moderator'] : ['admin']);
     if (action === 'admins') {
-      if (request.method === 'GET') return json({ admins: (await db.prepare('SELECT email,role,claimed_user_id,created_at FROM group_role_assignments WHERE group_id=? ORDER BY role DESC,email').bind(group).all()).results });
-      if (request.method === 'POST') {
+      // Roles: the owner manages them; admins may read them; a superadmin may only designate the first owner.
+      const isOwner = Boolean(await groupAuthority(db, admin, group, ['owner']));
+      const canRead = isOwner || superadminContext || Boolean(await groupAuthority(db, admin, group, ['admin']));
+      if (!canRead) throw new HttpError(403, 'No tienes permisos para administrar este grupo.');
+      const owner = await groupOwner(db, group);
+      if (request.method === 'GET') {
+        const admins = (await db.prepare(`SELECT email AS key,display_email AS email,role,claimed_user_id,created_at FROM group_role_assignments WHERE group_id=?
+          ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,display_email`).bind(group).all()).results;
+        return json({ admins, has_owner: Boolean(owner), can_manage_roles: isOwner, can_bootstrap_owner: superadminContext && !owner });
+      }
+      if (request.method === 'POST' || request.method === 'DELETE') {
         const body = await bodyJSON(request);
-        const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
-        const role = body?.role === 'moderator' ? 'moderator' : 'admin';
-        if (!emailPattern.test(email)) throw new HttpError(400, 'Indica un correo OAuth válido.');
-        await db.prepare(`INSERT INTO group_role_assignments (group_id,email,role,assigned_by_user_id,created_at)
-          VALUES (?,?,?,?,?) ON CONFLICT(group_id,email) DO UPDATE SET role=excluded.role,assigned_by_user_id=excluded.assigned_by_user_id`)
-          .bind(group, email, role, admin.user_id, now()).run();
-        return json({ email, role });
+        const email = typeof body?.email === 'string' ? body.email.trim() : '';
+        if (!emailPattern.test(email.toLowerCase())) throw new HttpError(400, 'Indica un correo OAuth válido.');
+        if (request.method === 'DELETE') {
+          if (!isOwner) throw new HttpError(403, 'Solo el owner del grupo puede retirar roles.');
+          return json(await removeGroupRole(db, admin.user_id, group, email));
+        }
+        if (body?.role === 'owner') {
+          if (isOwner) return json(await ownerChange(() => setGroupOwner(db, admin.user_id, group, email)));
+          if (superadminContext && !owner) return json(await ownerChange(() => setGroupOwner(db, admin.user_id, group, email, { claimedUserId: canonicalEmail(email) === admin.email ? admin.user_id : null })));
+          throw new HttpError(403, owner ? 'Solo el owner actual puede transferir la propiedad del grupo.' : 'Solo superadmin puede designar el primer owner.');
+        }
+        if (!['admin', 'moderator'].includes(body?.role)) throw new HttpError(400, 'Rol no válido.');
+        if (!isOwner) throw new HttpError(403, 'Solo el owner del grupo puede gestionar roles.');
+        return json(await assignGroupRole(db, admin.user_id, group, email, body.role));
       }
     }
+    await requireGroupAuthority(db, admin, group, action === 'wall' ? [...operators, 'moderator'] : operators);
     if (action === 'invitation' && request.method === 'POST') {
       const code = invitationCode();
       await db.prepare('UPDATE groups SET invite_hash=? WHERE id=?').bind(await digest(code), group).run();
@@ -233,7 +255,7 @@ async function adminRoutes(request, env, db, url) {
     const photo = await db.prepare("SELECT * FROM photos WHERE id=? AND status IN ('pending','published','hidden','deleting')").bind(photoAction[1]).first();
     if (!photo) throw new HttpError(404, 'No se encuentra la fotografía.');
     requireSelectedGroup(photo.group_id);
-    await requireGroupAuthority(db, admin, photo.group_id, ['admin']);
+    await requireGroupAuthority(db, admin, photo.group_id, operators);
     const action = photoAction[2];
     if (action === 'delete') await erasePhoto(env, db, photo);
     else {
@@ -251,7 +273,7 @@ async function adminRoutes(request, env, db, url) {
   const recovery = /^\/api\/admin\/groups\/([a-z0-9-]+)\/recover-identity$/.exec(url.pathname);
   if (recovery && request.method === 'POST') {
     requireSelectedGroup(recovery[1]);
-    await requireGroupAuthority(db, admin, recovery[1], ['admin']);
+    await requireGroupAuthority(db, admin, recovery[1], operators);
     const { source, target } = await bodyJSON(request);
     if (!uuid.test(source || '') || !uuid.test(target || '') || source === target) throw new HttpError(400, 'Selecciona dos identidades diferentes.');
     const members = await db.prepare('SELECT publisher_id FROM memberships WHERE group_id=? AND publisher_id IN (?,?)').bind(recovery[1], source, target).all();
@@ -271,11 +293,12 @@ async function adminRoutes(request, env, db, url) {
   const memberAction = /^\/api\/admin\/groups\/([a-z0-9-]+)\/publishers\/([a-f0-9-]+)$/.exec(url.pathname);
   if (memberAction && request.method === 'POST') {
     requireSelectedGroup(memberAction[1]);
-    await requireGroupAuthority(db, admin, memberAction[1], ['admin']);
+    await requireGroupAuthority(db, admin, memberAction[1], operators);
     const body = await bodyJSON(request);
     if (!['MODERATED','TRUSTED','BLOCKED'].includes(body?.status)) throw new HttpError(400, 'Estado no válido.');
     const source = await db.prepare('SELECT user_id FROM publishers WHERE id=?').bind(memberAction[2]).first();
     if (!source) throw new HttpError(404, 'No se encuentra la participación.');
+    if (body.status === 'BLOCKED' && await db.prepare("SELECT 1 FROM group_memberships WHERE group_id=? AND user_id=? AND role='owner'").bind(memberAction[1], source.user_id).first()) throw new HttpError(409, 'El owner no puede bloquearse sin transferir antes la propiedad del grupo.');
     await db.batch([
       db.prepare('UPDATE memberships SET status=? WHERE group_id=? AND publisher_id=?').bind(body.status, memberAction[1], memberAction[2]),
       db.prepare("UPDATE group_memberships SET state=?,trust=? WHERE group_id=? AND user_id=?").bind(body.status === 'BLOCKED' ? 'blocked' : 'active', body.status === 'TRUSTED' ? 1 : 0, memberAction[1], source.user_id)
@@ -313,7 +336,7 @@ export async function communityRoute(request, env) {
     const photo = await db.prepare("SELECT * FROM photos WHERE id=? AND status IN ('pending','published','hidden')").bind(avatarMatch[1]).first();
     const oauth = photo ? await adminIdentity(request, env) : null;
     const principal = oauth ? await ensureAdminPrincipal(db, oauth, adminEmails(env)) : null;
-    const administrative = photo && await groupAuthority(db, principal, photo.group_id, ['admin','moderator']);
+    const administrative = photo && await groupAuthority(db, principal, photo.group_id, ['owner','admin','moderator']);
     const allowed = photo && ((user && (photo.user_id === user.user_id || (photo.group_id === user.group_id && photo.status === 'published'))) || administrative);
     if (!allowed) throw new HttpError(404, 'No se encuentra la imagen de perfil.');
     const avatar = await db.prepare('SELECT image FROM profile_avatars WHERE publisher_id=? AND group_id=?').bind(photo.publisher_id, photo.group_id).first();
@@ -325,7 +348,7 @@ export async function communityRoute(request, env) {
     const photo = await db.prepare("SELECT * FROM photos WHERE id=? AND status IN ('pending','published','hidden')").bind(imageMatch[1]).first();
     const oauth = photo ? await adminIdentity(request, env) : null;
     const principal = oauth ? await ensureAdminPrincipal(db, oauth, adminEmails(env)) : null;
-    const administrative = photo && await groupAuthority(db, principal, photo.group_id, ['admin','moderator']);
+    const administrative = photo && await groupAuthority(db, principal, photo.group_id, ['owner','admin','moderator']);
     const allowed = photo && ((user && (photo.user_id === user.user_id || (photo.group_id === user.group_id && photo.status === 'published'))) || administrative);
     if (!allowed) throw new HttpError(404, 'No se encuentra la fotografía.');
     const object = await env.PHOTOS.get(photo.image_key);

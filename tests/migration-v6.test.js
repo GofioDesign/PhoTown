@@ -63,14 +63,58 @@ test('v6 migration preserves legacy authorship and creates identified groups wit
 });
 
 test('global superadmin and per-group authority remain separate dimensions', async () => {
-  const sqlite = legacyDatabase(); sqlite.exec(migration('0005_core_v6.sql'));
+  const sqlite = legacyDatabase(); sqlite.exec(migration('0005_core_v6.sql')); sqlite.exec(migration('0006_identity_ownership.sql'));
   const db = adapter(sqlite);
   const superadmin = await ensureAdminPrincipal(db, { sub: 'google-1', email: 'admin@example.com' }, ['admin@example.com']);
   assert.equal(superadmin.superadmin, true);
   assert.equal(await groupAuthority(db, superadmin, 'group-a', ['admin']), null);
-  sqlite.prepare("INSERT INTO group_role_assignments (group_id,email,role,assigned_by_user_id,created_at) VALUES ('group-a','admin@example.com','admin',?,'2026-09-03T00:00:00.000Z')").run(superadmin.user_id);
+  sqlite.prepare("INSERT INTO group_role_assignments (group_id,email,display_email,role,assigned_by_user_id,created_at) VALUES ('group-a','admin@example.com','admin@example.com','admin',?,'2026-09-03T00:00:00.000Z')").run(superadmin.user_id);
   await ensureAdminPrincipal(db, { sub: 'google-1', email: 'admin@example.com' }, ['admin@example.com']);
   assert.equal((await groupAuthority(db, superadmin, 'group-a', ['admin'])).role, 'admin');
   assert.equal(await groupAuthority(db, superadmin, 'group-b', ['admin']), null);
   assert.equal(sqlite.prepare("SELECT role FROM global_roles WHERE user_id=?").get(superadmin.user_id).role, 'superadmin');
+});
+
+test('0006 folds dotted Gmail duplicates, keeps the strongest role and promotes no owner', () => {
+  const sqlite = legacyDatabase(); sqlite.exec(migration('0005_core_v6.sql'));
+  sqlite.exec(`
+    INSERT INTO identity_providers (id,user_id,provider,subject,email,created_at) VALUES
+      ('idp-1','user-a','google','sub-1','Ana.Perez@gmail.com','2026-09-03T00:00:00.000Z'),
+      ('idp-2','user-b','google','sub-2','ana.perez@example.com','2026-09-03T00:00:00.000Z');
+    INSERT INTO group_role_assignments (group_id,email,role,assigned_by_user_id,claimed_user_id,created_at) VALUES
+      ('group-a','ana.perez@gmail.com','moderator','user-b','user-a','2026-09-03T00:00:00.000Z'),
+      ('group-a','anaperez@gmail.com','admin','user-b',NULL,'2026-09-04T00:00:00.000Z'),
+      ('group-a','ana.perez@example.com','moderator','user-b',NULL,'2026-09-04T00:00:00.000Z'),
+      ('group-b','anaperez@example.com','admin','user-b',NULL,'2026-09-04T00:00:00.000Z');
+  `);
+  sqlite.exec(migration('0006_identity_ownership.sql'));
+  const rows = sqlite.prepare('SELECT group_id,email,display_email,role,claimed_user_id FROM group_role_assignments ORDER BY group_id,email').all().map(row => ({ ...row }));
+  assert.deepEqual(rows, [
+    { group_id: 'group-a', email: 'ana.perez@example.com', display_email: 'ana.perez@example.com', role: 'moderator', claimed_user_id: null },
+    { group_id: 'group-a', email: 'anaperez@gmail.com', display_email: 'anaperez@gmail.com', role: 'admin', claimed_user_id: 'user-a' },
+    { group_id: 'group-b', email: 'anaperez@example.com', display_email: 'anaperez@example.com', role: 'admin', claimed_user_id: null }
+  ]);
+  const merge = sqlite.prepare('SELECT subject_email,old_role,new_role,reason,actor_user_id FROM role_events').all().map(row => ({ ...row }));
+  assert.deepEqual(merge, [{ subject_email: 'anaperez@gmail.com', old_role: 'moderator', new_role: 'admin', reason: 'gmail_canonical_merge:ana.perez@gmail.com', actor_user_id: null }]);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM group_role_assignments WHERE role='owner'").get().n, 0);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM group_memberships WHERE role='owner'").get().n, 0);
+  assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM users').get().n, 2);
+  assert.deepEqual({ ...sqlite.prepare("SELECT email,verified_email FROM identity_providers WHERE id='idp-1'").get() }, { email: 'anaperez@gmail.com', verified_email: 'Ana.Perez@gmail.com' });
+  assert.equal(sqlite.prepare("SELECT email FROM identity_providers WHERE id='idp-2'").get().email, 'ana.perez@example.com');
+  assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM group_memberships').get().n, 3);
+  assert.throws(() => sqlite.exec("UPDATE role_events SET reason='x'"), /append-only/);
+  assert.throws(() => sqlite.exec('DELETE FROM role_events'), /append-only/);
+  sqlite.exec("INSERT INTO group_role_assignments (group_id,email,display_email,role,assigned_by_user_id,created_at) VALUES ('group-b','one@example.com','one@example.com','owner','user-a','2026-10-01T00:00:00.000Z')");
+  assert.throws(() => sqlite.exec("INSERT INTO group_role_assignments (group_id,email,display_email,role,assigned_by_user_id,created_at) VALUES ('group-b','two@example.com','two@example.com','owner','user-a','2026-10-01T00:00:00.000Z')"), /UNIQUE/);
+});
+
+test('dotted Gmail sign-in resolves the canonical assignment', async () => {
+  const sqlite = legacyDatabase(); sqlite.exec(migration('0005_core_v6.sql')); sqlite.exec(migration('0006_identity_ownership.sql'));
+  const db = adapter(sqlite);
+  sqlite.exec("INSERT INTO group_role_assignments (group_id,email,display_email,role,assigned_by_user_id,created_at) VALUES ('group-a','anaperez@gmail.com','anaperez@gmail.com','moderator','user-a','2026-10-01T00:00:00.000Z')");
+  const principal = await ensureAdminPrincipal(db, { sub: 'g-ana', email: 'Ana.Perez@Gmail.com' });
+  assert.equal(principal.email, 'anaperez@gmail.com');
+  assert.equal((await groupAuthority(db, principal, 'group-a', ['moderator'])).role, 'moderator');
+  assert.equal(sqlite.prepare("SELECT verified_email FROM identity_providers WHERE subject='g-ana'").get().verified_email, 'Ana.Perez@Gmail.com');
+  assert.equal(await ensureAdminPrincipal(db, { sub: 'g-other', email: 'ana.perez@example.com' }), null);
 });

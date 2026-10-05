@@ -1,19 +1,20 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { digest, HttpError } from './security.js';
+import { canonicalEmail } from './identity.js';
 import { cookieValue, cookieHeader, randomToken, signToken, verifyToken } from './tokens.js';
 const GOOGLE_KEYS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
-export const adminEmails = env => (env.SUPERADMIN_EMAILS || '').split(/[;,]/).map(v => v.trim().toLowerCase()).filter(Boolean);
+export const adminEmails = env => (env.SUPERADMIN_EMAILS || '').split(/[;,]/).map(canonicalEmail).filter(Boolean);
 export const googleReady = env => Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && adminEmails(env).length);
 export async function adminIdentity(request, env) {
   const identity = await verifyToken(env, cookieValue(request, 'photown_admin'), 'admin');
   return identity && typeof identity.email === 'string' ? identity : null;
 }
 export function authorizeGoogleClaims(payload, env, nonce, assigned = false) {
-  const email = payload.email?.toLowerCase();
+  const email = typeof payload.email === 'string' ? canonicalEmail(payload.email) : '';
   if (payload.nonce !== nonce || payload.email_verified !== true || !payload.sub || (!adminEmails(env).includes(email) && !assigned)) {
     throw new HttpError(403, 'Esta cuenta de Google no tiene acceso a la administración de PhoTown.');
   }
-  return { sub: payload.sub, email };
+  return { sub: payload.sub, email, display_email: payload.email.trim() };
 }
 export async function googleStart(request, env, db) {
   if (!googleReady(env)) return new Response(null, { status: 302, headers: { Location: '/admin?login=unconfigured' } });
@@ -43,7 +44,7 @@ export async function googleCallback(request, env, db) {
     if (!response.ok) throw new Error('Google exchange failed');
     const tokens = await response.json();
     const { payload } = await jwtVerify(tokens.id_token, GOOGLE_KEYS, { issuer: ['https://accounts.google.com', 'accounts.google.com'], audience: env.GOOGLE_CLIENT_ID, algorithms: ['RS256'] });
-    const email = payload.email?.toLowerCase();
+    const email = typeof payload.email === 'string' ? canonicalEmail(payload.email) : '';
     const assigned = email && await db.prepare('SELECT 1 FROM group_role_assignments WHERE email=? LIMIT 1').bind(email).first();
     const admin = authorizeGoogleClaims(payload, env, saved.nonce, Boolean(assigned));
     const headers = new Headers({ Location: '/admin' });
