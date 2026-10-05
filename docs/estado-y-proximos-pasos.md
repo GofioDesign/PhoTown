@@ -81,6 +81,12 @@ Decidido el 1 de octubre de 2026: se añade la entrada con enlace mágico por co
 - Cámara: botón «Quemados» que marca en rojo los píxeles a 255 y en azul los de 0. Solo superpuesto, nunca se guarda en la foto.
 - Muro y YO en rejilla cuadrada uniforme de 3 columnas.
 
+#### Invitaciones por correo (5 de octubre de 2026)
+
+- Migración `0009_email_invitations.sql`, `server/invitations.js`. Owner y admin invitan desde Administración con «Invitar por correo», hasta 20 correos cada vez, con el mismo proveedor que el magic link.
+- Cada persona recibe un enlace de un solo uso que caduca en 7 días (`/invite`). Al aceptarlo entra en el grupo y su correo queda vinculado, así que después puede usar «Entrar con mi correo». Si el correo ya pertenece a un USER, el enlace abre ese mismo USER en el dispositivo.
+- La invitación con código sigue funcionando igual.
+
 ### 5. Cámara móvil y accesibilidad
 
 - Alternar cámara frontal y trasera manteniendo el BN, la orientación y el espejo de la frontal.

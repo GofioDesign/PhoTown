@@ -97,14 +97,40 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
       const card = document.createElement('article'); card.className = 'admin-row';
       const scopedContext = context.type === 'group' ? `&context=${encodeURIComponent(context.key)}` : '';
       const canManage = context.type !== 'group' || ['owner', 'admin'].includes(context.role);
-      const manageControls = canManage ? `<button data-action="manage">Gestionar grupo</button><button data-action="invitation">Generar nueva invitación</button><button data-action="active">${group.active ? 'Cerrar grupo' : 'Abrir grupo'}</button>` : '';
-      card.innerHTML = `<h2>${escape(group.name)}</h2><p>${group.active ? 'Grupo abierto' : 'Grupo cerrado'}</p><a class="button" href="/admin/wall?group=${encodeURIComponent(group.id)}${scopedContext}">Muro</a>${manageControls}<div class="invitation-result"></div><p class="group-status" role="status"></p>`;
+      const manageControls = canManage ? `<button data-action="manage">Gestionar grupo</button><button data-action="invitation">Generar nueva invitación</button><button data-action="email-invite" aria-expanded="false">Invitar por correo</button><button data-action="active">${group.active ? 'Cerrar grupo' : 'Abrir grupo'}</button>` : '';
+      card.innerHTML = `<h2>${escape(group.name)}</h2><p>${group.active ? 'Grupo abierto' : 'Grupo cerrado'}</p><a class="button" href="/admin/wall?group=${encodeURIComponent(group.id)}${scopedContext}">Muro</a>${manageControls}<div class="invitation-result"></div><form class="email-invite" hidden><label>Correos de las personas invitadas<textarea name="emails" rows="3" maxlength="6000" placeholder="ana@ejemplo.com, luis@ejemplo.com" required></textarea></label><p class="note">Separa los correos con comas o saltos de línea, hasta 20 cada vez. Cada persona recibe un enlace de un solo uso que caduca en 7 días.</p><button class="primary" type="submit">Enviar invitaciones</button><div class="invite-list"></div></form><p class="group-status" role="status"></p>`;
       if (!canManage) { list.append(card); continue; }
       card.querySelector('[data-action=manage]').onclick = () => details(group);
       card.querySelector('[data-action=invitation]').onclick = async event => {
         event.target.disabled = true;
         try { const result = await post(`/api/admin/groups/${group.id}/invitation`); invitation(card.querySelector('.invitation-result'), result.code); card.querySelector('.group-status').textContent = 'El código anterior ya no permite nuevas entradas. Las sesiones abiertas conservan su acceso hasta caducar.'; }
         catch (error) { card.querySelector('.group-status').textContent = error.message; } finally { event.target.disabled = false; }
+      };
+      const emailForm = card.querySelector('.email-invite'), emailToggle = card.querySelector('[data-action=email-invite]');
+      const statusText = { sent: 'enviada', member: 'ya está en el grupo', recent: 'ya se envió hace menos de 10 minutos', invalid: 'correo no válido', failed: 'no se pudo enviar', pending: 'pendiente', accepted: 'aceptada', expired: 'caducada' };
+      const showInvitations = async () => {
+        const { invitations } = await api(`/api/admin/groups/${group.id}/email-invitations`); if (!current()) return;
+        const list = emailForm.querySelector('.invite-list'); list.replaceChildren();
+        if (!invitations.length) return;
+        const heading = document.createElement('h3'); heading.textContent = 'Invitaciones enviadas'; list.append(heading);
+        for (const item of invitations) { const row = document.createElement('p'); row.className = 'member-row'; row.textContent = `${item.email} · ${statusText[item.status]} · ${new Date(item.sent_at).toLocaleDateString('es')}`; list.append(row); }
+      };
+      emailToggle.onclick = () => {
+        emailForm.hidden = !emailForm.hidden; emailToggle.setAttribute('aria-expanded', String(!emailForm.hidden));
+        if (!emailForm.hidden) { emailForm.elements.emails.focus(); showInvitations().catch(error => { card.querySelector('.group-status').textContent = error.message; }); }
+      };
+      emailForm.onsubmit = async event => {
+        event.preventDefault(); const button = emailForm.querySelector('button'); button.disabled = true;
+        card.querySelector('.group-status').textContent = 'Enviando invitaciones…';
+        try {
+          const { results } = await post(`/api/admin/groups/${group.id}/email-invitations`, { emails: emailForm.elements.emails.value });
+          const sent = results.filter(item => item.status === 'sent').length;
+          const others = results.filter(item => item.status !== 'sent').map(item => `${item.email}: ${statusText[item.status]}`);
+          card.querySelector('.group-status').textContent = `${sent === 1 ? '1 invitación enviada' : sent + ' invitaciones enviadas'}.${others.length ? ' ' + others.join('; ') + '.' : ''}`;
+          if (sent) emailForm.elements.emails.value = '';
+          await showInvitations();
+        } catch (error) { card.querySelector('.group-status').textContent = error.message; }
+        finally { button.disabled = false; }
       };
       card.querySelector('[data-action=active]').onclick = async event => {
         event.target.disabled = true;

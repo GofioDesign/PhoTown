@@ -66,7 +66,7 @@ async function route(request, env) {
     requireConfiguration(env);
     if (!(await readSession(env, request))) return new Response(null, { status: 302, headers: { Location: '/enter' } });
   }
-  if (['/', '/enter', '/login', '/camera', '/preview'].includes(url.pathname)) {
+  if (['/', '/enter', '/login', '/invite', '/camera', '/preview'].includes(url.pathname)) {
     return env.ASSETS.fetch(new Request(new URL('/index.html', url), request));
   }
   // Public app assets only; photographs are authorized by communityRoute.
