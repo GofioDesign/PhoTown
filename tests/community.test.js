@@ -9,7 +9,7 @@ import { cleanupDeleted, photoWeek, erasePhoto } from '../server/community.js';
 import { sanitizeWebP } from '../server/webp.js';
 import { ensureAdminPrincipal } from '../server/core-v6.js';
 import { sendNotifications } from '../server/notifications.js';
-import { b64url, unb64url } from '../server/push.js';
+import { b64url, unb64url, vapidKeys } from '../server/push.js';
 import { importJWK, jwtVerify } from 'jose';
 
 function env() {
@@ -582,6 +582,9 @@ test('web push: devices subscribe, receive encrypted VAPID-signed notices and ex
   const vapid = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
   e.VAPID_PUBLIC_KEY = b64url(await crypto.subtle.exportKey('raw', vapid.publicKey));
   e.VAPID_PRIVATE_KEY = (await crypto.subtle.exportKey('jwk', vapid.privateKey)).d;
+  // Secrets pasted with their name or quotes, as the key script once printed them, still work; junk turns push off.
+  assert.deepEqual(vapidKeys({ VAPID_PUBLIC_KEY: ` VAPID_PUBLIC_KEY=${e.VAPID_PUBLIC_KEY}\n`, VAPID_PRIVATE_KEY: `"${e.VAPID_PRIVATE_KEY}"` }), { publicKey: e.VAPID_PUBLIC_KEY, privateKey: e.VAPID_PRIVATE_KEY });
+  assert.equal(vapidKeys({ VAPID_PUBLIC_KEY: 'not a key', VAPID_PRIVATE_KEY: e.VAPID_PRIVATE_KEY }), null);
   const a = await join(e);
   assert.equal((await (await call(e, '/api/notifications', 'GET', a)).json()).push_key, e.VAPID_PUBLIC_KEY);
   const uaKeys = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);

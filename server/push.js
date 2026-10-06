@@ -16,16 +16,27 @@ async function hmac(key, data) {
   return new Uint8Array(await crypto.subtle.sign('HMAC', imported, data));
 }
 
-export const pushReady = env => Boolean(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY);
+// Secrets pasted as `VAPID_PUBLIC_KEY=…`, quoted or with spaces still work; anything that
+// is not a valid key turns Web Push off instead of breaking the settings screen.
+function cleanKey(value, name) {
+  const text = String(value ?? '').trim().replace(new RegExp(`^${name}\\s*=\\s*`), '').replace(/^["']|["']$/g, '').replace(/\s+/g, '');
+  return /^[A-Za-z0-9_-]+$/.test(text) ? text : null;
+}
+export function vapidKeys(env) {
+  const publicKey = cleanKey(env.VAPID_PUBLIC_KEY, 'VAPID_PUBLIC_KEY'), privateKey = cleanKey(env.VAPID_PRIVATE_KEY, 'VAPID_PRIVATE_KEY');
+  try { if (publicKey && privateKey && unb64url(publicKey).length === 65 && unb64url(privateKey).length === 32) return { publicKey, privateKey }; } catch { /* invalid */ }
+  return null;
+}
+export const pushReady = env => Boolean(vapidKeys(env));
 
 async function vapidHeader(env, endpoint) {
-  const publicKey = unb64url(env.VAPID_PUBLIC_KEY);
-  const key = await crypto.subtle.importKey('jwk', { kty: 'EC', crv: 'P-256', x: b64url(publicKey.slice(1, 33)), y: b64url(publicKey.slice(33, 65)), d: env.VAPID_PRIVATE_KEY, ext: true },
+  const keys = vapidKeys(env), publicKey = unb64url(keys.publicKey);
+  const key = await crypto.subtle.importKey('jwk', { kty: 'EC', crv: 'P-256', x: b64url(publicKey.slice(1, 33)), y: b64url(publicKey.slice(33, 65)), d: keys.privateKey, ext: true },
     { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
   const part = value => b64url(encoder.encode(JSON.stringify(value)));
   const unsigned = `${part({ typ: 'JWT', alg: 'ES256' })}.${part({ aud: new URL(endpoint).origin, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: env.VAPID_SUBJECT || 'https://photown.gofiodesign.eu' })}`;
   const signature = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, encoder.encode(unsigned));
-  return `vapid t=${unsigned}.${b64url(signature)}, k=${env.VAPID_PUBLIC_KEY}`;
+  return `vapid t=${unsigned}.${b64url(signature)}, k=${keys.publicKey}`;
 }
 
 export async function encryptPayload(subscription, payload) {
