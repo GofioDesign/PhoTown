@@ -7,8 +7,8 @@ const DEFAULT_FROM = 'PhoTown <acceso@photown.gofiodesign.eu>';
 
 export const mailReady = env => Boolean(env.RESEND_API_KEY);
 
-export async function sendMail(env, { to, subject, text, html }) {
-  const message = { from: env.MAIL_FROM || DEFAULT_FROM, to: [to], subject, text, html };
+export async function sendMail(env, { to, subject, text, html, headers }) {
+  const message = { from: env.MAIL_FROM || DEFAULT_FROM, to: [to], subject, text, html, ...(headers ? { headers } : {}) };
   if (env.RESEND_API_KEY) {
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -24,7 +24,7 @@ export async function sendMail(env, { to, subject, text, html }) {
 }
 
 // One restrained layout for every message: black and white, a single action.
-export function layout({ title, paragraphs, action, link, footer }) {
+export function layout({ title, paragraphs, action, link, footer, unsubscribe }) {
   const html = `<!doctype html><html lang="es"><body style="margin:0;background:#111;color:#eee;font-family:Arial,Helvetica,sans-serif">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:40px 20px">
 <table role="presentation" width="100%" style="max-width:520px"><tr><td>
@@ -34,7 +34,8 @@ ${paragraphs.map(p => `<p style="font-size:16px;line-height:1.6;color:#ccc;margi
 ${link ? `<p style="margin:32px 0"><a href="${escape(link)}" style="display:inline-block;background:#eee;color:#111;text-decoration:none;padding:14px 28px;font-size:16px">${escape(action)}</a></p>
 <p style="font-size:13px;color:#999;line-height:1.5;word-break:break-all">Si el botón no funciona, copia esta dirección en el navegador:<br>${escape(link)}</p>` : ''}
 ${footer ? `<p style="font-size:13px;color:#888;line-height:1.5;margin-top:32px">${escape(footer)}</p>` : ''}
+${unsubscribe ? `<p style="font-size:13px;color:#888;line-height:1.5;margin-top:16px"><a href="${escape(unsubscribe)}" style="color:#aaa">Dejar de recibir estos avisos</a></p>` : ''}
 </td></tr></table></td></tr></table></body></html>`;
-  const plain = [title, '', ...paragraphs, ...(link ? ['', `${action}: ${link}`] : []), ...(footer ? ['', footer] : [])].join('\n');
+  const plain = [title, '', ...paragraphs, ...(link ? ['', `${action}: ${link}`] : []), ...(footer ? ['', footer] : []), ...(unsubscribe ? ['', `Dejar de recibir estos avisos: ${unsubscribe}`] : [])].join('\n');
   return { html, text: plain };
 }

@@ -160,6 +160,20 @@ function loginPage() {
     finish({ purpose: 'login', email: emailForm.elements.email.value, code: codeForm.elements.code.value }, codeForm.querySelector('button'));
   };
 }
+function unsubscribePage() {
+  const token = new URLSearchParams(location.search).get('token') || '';
+  history.replaceState({}, '', '/unsubscribe');
+  shell('<section class="entry"><p class="eyebrow">PHOTOWN</p><h1>Avisos por correo</h1><p>Pulsa el botón para dejar de recibir este tipo de aviso. Puedes volver a activarlo cuando quieras desde Personalización.</p><button class="primary" id="confirm-unsubscribe">Dejar de recibirlos</button><p id="message" class="message" role="alert"></p><a class="secondary-link" href="/" data-route="/">Volver a PhoTown</a></section>');
+  const button = root.querySelector('#confirm-unsubscribe');
+  button.onclick = async () => {
+    button.disabled = true; message('Guardando…');
+    try {
+      const result = await api('/api/unsubscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+      button.remove();
+      message(result.unsubscribed === 'digest' ? 'Listo. Ya no recibirás resúmenes de fotos nuevas.' : 'Listo. Ya no recibirás avisos de fotos pendientes de revisar.');
+    } catch (error) { message(error.message); button.disabled = false; }
+  };
+}
 async function invitePage() {
   const token = new URLSearchParams(location.search).get('token') || sessionStorage.getItem('photown-invite') || '';
   // Keep the one-use token out of the address bar and history, but survive a reload.
@@ -415,6 +429,7 @@ function render() {
   } else if (path === '/enter') entryForm(Boolean(shot));
   else if (path === '/login') loginPage();
   else if (path === '/invite') invitePage();
+  else if (path === '/unsubscribe') unsubscribePage();
   else if (path === '/admin/wall') ui.gallery(version, false, new URLSearchParams(location.search).get('group') || 'invalid');
   else if (path === '/admin') renderAdmin({ root, api, shell, current: () => version === renderVersion, confirmDeletion });
   else if (['/camera','/preview','/my-photos','/wall','/settings'].includes(path)) {
