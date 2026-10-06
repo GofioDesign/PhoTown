@@ -4,13 +4,15 @@ import { sendMail, mailReady, layout } from './mail.js';
 import { photoWeek } from './community.js';
 import { pushReady, sendPush } from './push.js';
 
-// Notifications sent from the hourly cron, by email and by Web Push to every device that
-// accepted them: a digest of new photos for wall members (daily or weekly, per USER) and a
-// daily reminder of the moderation queue for a group's owner, admins and moderators.
-// Each message is recorded before sending, so overlapping or retried runs never send
-// twice; a message no channel delivered releases its record for the next hour.
+// Notifications sent from the cron (every 10 minutes), by email and by Web Push to every
+// device that accepted them: a digest of new photos for wall members (daily or weekly, per
+// USER) and, for a group's owner, admins and moderators, a notice as soon as a new photo
+// waits for review (daytime only). Each message is recorded before sending, so overlapping
+// or retried runs never send twice; a message no channel delivered releases its record
+// for the next run.
 const TIME_ZONE = 'Atlantic/Canary';
 const SEND_HOUR = 9;
+const QUIET_HOUR = 23; // no moderation notices from 23:00 until SEND_HOUR
 const MAX_PER_RUN = 20;
 const KEEP_DELIVERIES_DAYS = 60;
 const UNSUBSCRIBE_SECONDS = 365 * 24 * 60 * 60;
@@ -106,7 +108,7 @@ async function moderationMessage(env, db, user) {
       title: `${plural(total, 'foto espera', 'fotos esperan')} tu revisión`,
       paragraphs: groups.map(group => `«${group.name}»: ${plural(group.photos, 'foto pendiente', 'fotos pendientes')}.`),
       action: 'Revisar en Administración', link: `${origin(env)}/admin`,
-      footer: 'Recibes este aviso porque moderas estos grupos. Solo llega los días en que hay fotos por revisar.',
+      footer: 'Recibes este aviso porque moderas estos grupos. Llega cuando hay fotos nuevas por revisar, entre las 9:00 y las 23:00.',
       unsubscribe: links.page
     })
   };
@@ -115,11 +117,13 @@ async function moderationMessage(env, db, user) {
 async function candidates(db, kind, period, since, limit) {
   const reachable = '(EXISTS(SELECT 1 FROM identity_providers ip WHERE ip.user_id=u.id AND ip.email IS NOT NULL) OR EXISTS(SELECT 1 FROM push_subscriptions ps WHERE ps.user_id=u.id))';
   const pending = 'NOT EXISTS(SELECT 1 FROM notification_deliveries d WHERE d.user_id=u.id AND d.kind=? AND d.period=?)';
+  // Moderators hear about a pending photo once: only photos uploaded after their last notice count.
   if (kind === 'moderation') return (await db.prepare(`SELECT u.id AS user_id,${userEmail} AS email FROM users u
     LEFT JOIN notification_preferences np ON np.user_id=u.id
     WHERE u.status='active' AND COALESCE(np.moderation,1)=1 AND ${pending}
       AND EXISTS(SELECT 1 FROM group_memberships gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id AND gm.role IN ('owner','admin','moderator') AND gm.state='active' AND g.active=1
-        AND EXISTS(SELECT 1 FROM photos p WHERE p.group_id=g.id AND p.status='pending'))
+        AND EXISTS(SELECT 1 FROM photos p WHERE p.group_id=g.id AND p.status='pending'
+          AND CAST(strftime('%s',p.created_at) AS INTEGER)>COALESCE((SELECT MAX(d.sent_at) FROM notification_deliveries d WHERE d.user_id=u.id AND d.kind='moderation'),0)))
       AND ${reachable}
     LIMIT ?`).bind(kind, period, limit).all()).results;
   return (await db.prepare(`SELECT u.id AS user_id,${userEmail} AS email FROM users u
@@ -138,7 +142,8 @@ export async function sendNotifications(env, date = new Date()) {
   const clock = localClock(date);
   await db.prepare('DELETE FROM notification_deliveries WHERE sent_at<?').bind(seconds(date) - KEEP_DELIVERIES_DAYS * 86400).run();
   if (clock.hour < SEND_HOUR) return { sent: 0 };
-  const runs = [{ kind: 'moderation', period: clock.day }, { kind: 'daily', period: clock.day, since: new Date(date - 86400000).toISOString() }];
+  const runs = [{ kind: 'daily', period: clock.day, since: new Date(date - 86400000).toISOString() }];
+  if (clock.hour < QUIET_HOUR) runs.unshift({ kind: 'moderation', period: date.toISOString().slice(0, 16) });
   if (clock.monday) runs.push({ kind: 'weekly', period: photoWeek(date), since: new Date(date - 7 * 86400000).toISOString() });
   let sent = 0, failed = 0;
   for (const run of runs) {

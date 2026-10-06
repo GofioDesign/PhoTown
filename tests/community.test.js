@@ -517,6 +517,7 @@ test('email notifications: moderation queue for admins, digests for members, onc
   await call(e, '/api/login/verify', 'POST', a, { purpose: 'link', email: 'ana@example.com', code: lastCode(e) });
   assert.deepEqual(await (await call(e, '/api/notifications', 'GET', a)).json(), { email: 'ana@example.com', digest: 'weekly', moderation: true, moderates: false, devices: 0, push_key: null });
   const b = await join(e), photo = crypto.randomUUID(); await upload(e, b, photo);
+  e.sqlite.prepare('UPDATE photos SET created_at=? WHERE id=?').run('2026-10-05T07:00:00.000Z', photo);
   const admin = await adminCookie(e);
   const monday = new Date('2026-10-05T09:30:00Z'); // 10:30 in the Canaries
   e.MAIL_OUTBOX = [];
@@ -528,6 +529,13 @@ test('email notifications: moderation queue for admins, digests for members, onc
   assert.match(e.MAIL_OUTBOX[0].text, /«PhoTown»: 1 foto pendiente/);
   assert.match(e.MAIL_OUTBOX[0].headers['List-Unsubscribe'], /^<https:\/\/photown\.test\/api\/unsubscribe\?token=/);
   assert.deepEqual(await sendNotifications(e, monday), { sent: 0 });
+  // The same pending photo is not announced again; a newer one is, but not at night.
+  assert.deepEqual(await sendNotifications(e, new Date('2026-10-05T09:40:00Z')), { sent: 0 });
+  const second = crypto.randomUUID(); await upload(e, b, second);
+  e.sqlite.prepare('UPDATE photos SET created_at=? WHERE id=?').run('2026-10-05T22:30:00.000Z', second);
+  assert.deepEqual(await sendNotifications(e, new Date('2026-10-05T22:40:00Z')), { sent: 0 });
+  assert.match((await sendNotifications(e, new Date('2026-10-06T08:00:00Z')), e.MAIL_OUTBOX.at(-1).subject), /2 fotos pendientes/);
+  e.sqlite.prepare("UPDATE photos SET status='hidden' WHERE id=?").run(second);
 
   e.sqlite.prepare("UPDATE photos SET status='published',published_at=? WHERE id=?").run('2026-10-05T08:00:00.000Z', photo);
   e.MAIL_OUTBOX = [];
