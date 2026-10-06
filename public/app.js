@@ -4,7 +4,7 @@ import { setupInstall } from './install.js';
 import { photoUI } from './photo-ui.js';
 import { GRIDS, gridName, gridSVG, fitOverlay } from './grids.js';
 import { clippingOverlay } from './clipping.js';
-import { exposurePanel } from './exposure.js';
+import { exposurePanel, exposureReport } from './exposure.js';
 
 const root = document.querySelector('#app');
 let stream;
@@ -316,18 +316,24 @@ async function camera(version) {
     retry.hidden = false;
   }
 }
-// Chrome on Android fills in the camera's capabilities a moment after the stream starts, so ask a few times.
+// Chrome on Android fills in the camera's capabilities a moment after the stream starts, so ask again
+// for a few seconds and once more whenever the panel is opened.
 async function setupExposure(track, version) {
   const button = root.querySelector('#exposure-button'), panel = root.querySelector('#exposure-panel');
   if (!button || !panel || !track) return;
+  let ready = false;
+  const attempt = () => {
+    if (ready || version !== renderVersion || track.readyState !== 'live') return ready;
+    ready = Boolean(exposurePanel(track, panel, text => message(text)));
+    if (!ready) panel.innerHTML = `<p class="note">Este navegador o este móvil no permite ajustar la velocidad ni el ISO desde una web. Funciona en Chrome para Android cuando la cámara lo permite; en iPhone no es posible. La apertura (F) es fija en los móviles.</p><p class="note">La cámara informa: ${escape(exposureReport(track))}</p>`;
+    return ready;
+  };
   button.hidden = false;
-  button.onclick = () => { panel.hidden = !panel.hidden; button.setAttribute('aria-expanded', String(!panel.hidden)); };
-  for (const wait of [0, 500, 1500]) {
+  button.onclick = () => { attempt(); panel.hidden = !panel.hidden; button.setAttribute('aria-expanded', String(!panel.hidden)); };
+  for (const wait of [0, 500, 1000, 1500, 2000]) {
     if (wait) await new Promise(resolve => setTimeout(resolve, wait));
-    if (version !== renderVersion || track.readyState !== 'live') return;
-    if (exposurePanel(track, panel, text => message(text))) return;
+    if (version !== renderVersion || attempt()) return;
   }
-  panel.innerHTML = '<p class="note">Este navegador o este móvil no permite ajustar la velocidad ni el ISO desde una web. Funciona en Chrome para Android cuando la cámara lo permite; en iPhone no es posible. La apertura (F) es fija en los móviles.</p>';
 }
 function preview() {
   if (!shot) { navigate('/camera', true); return; }
