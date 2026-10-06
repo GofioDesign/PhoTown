@@ -7,7 +7,7 @@ import { canonicalEmail } from './identity.js';
 import { linkedEmail, requestEmailLink, requestLogin, verifyEmail } from './email-login.js';
 import { acceptInvitation, listInvitations, previewInvitation, sendInvitations } from './invitations.js';
 import { readPreferences, savePreferences, unsubscribe } from './notifications.js';
-import { removeSubscription, saveSubscription } from './push.js';
+import { removeSubscription, saveSubscription, vapidKeys } from './push.js';
 
 const json = (data, status = 200, headers = {}) => Response.json(data, { status, headers });
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -226,7 +226,7 @@ async function adminRoutes(request, env, db, url) {
     return json({ deleted: true });
   }
   if (url.pathname === '/api/admin/notifications') {
-    if (request.method === 'GET') return json({ ...await readPreferences(db, admin.user_id), push_key: env.VAPID_PUBLIC_KEY || null });
+    if (request.method === 'GET') return json({ ...await readPreferences(db, admin.user_id), push_key: vapidKeys(env)?.publicKey ?? null });
     if (request.method === 'POST') return json(await savePreferences(db, admin.user_id, await bodyJSON(request, 1024)));
   }
   if (url.pathname === '/api/admin/push') {
@@ -515,7 +515,7 @@ export async function communityRoute(request, env) {
     return json(request.method === 'POST' ? await saveSubscription(db, user.user_id, body) : await removeSubscription(db, user.user_id, body));
   }
   if (path === '/api/notifications') {
-    if (request.method === 'GET') return json({ ...await readPreferences(db, user.user_id), push_key: env.VAPID_PUBLIC_KEY || null });
+    if (request.method === 'GET') return json({ ...await readPreferences(db, user.user_id), push_key: vapidKeys(env)?.publicKey ?? null });
     if (request.method === 'POST') {
       await rate(env.UPLOAD_LIMITER, user.publisher_id);
       return json(await savePreferences(db, user.user_id, await bodyJSON(request, 1024)));
