@@ -1,4 +1,4 @@
--- Email notifications: a digest of new photos for wall members and a reminder of the
+-- Notifications by email and Web Push: a digest of new photos for wall members and a reminder of the
 -- pending moderation queue for a group's owner, admins and moderators.
 -- A missing preferences row means the defaults: weekly digest, moderation reminder on.
 CREATE TABLE notification_preferences (
@@ -19,3 +19,14 @@ CREATE TABLE notification_deliveries (
 CREATE INDEX notification_deliveries_sent ON notification_deliveries(sent_at);
 
 CREATE INDEX photos_group_published ON photos(group_id,status,published_at);
+
+-- Web Push: one row per device (browser) that accepted notifications.
+CREATE TABLE push_subscriptions (
+  endpoint_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  endpoint TEXT NOT NULL,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX push_subscriptions_user ON push_subscriptions(user_id,created_at);

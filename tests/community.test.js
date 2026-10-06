@@ -9,6 +9,8 @@ import { cleanupDeleted, photoWeek, erasePhoto } from '../server/community.js';
 import { sanitizeWebP } from '../server/webp.js';
 import { ensureAdminPrincipal } from '../server/core-v6.js';
 import { sendNotifications } from '../server/notifications.js';
+import { b64url, unb64url } from '../server/push.js';
+import { importJWK, jwtVerify } from 'jose';
 
 function env() {
   const sqlite = new DatabaseSync(':memory:'); sqlite.exec(readFileSync(new URL('../db/migrations/0001_groups.sql', import.meta.url), 'utf8'));
@@ -513,7 +515,7 @@ test('email notifications: moderation queue for admins, digests for members, onc
   const a = await join(e);
   await call(e, '/api/account/email', 'POST', a, { email: 'ana@example.com' });
   await call(e, '/api/login/verify', 'POST', a, { purpose: 'link', email: 'ana@example.com', code: lastCode(e) });
-  assert.deepEqual(await (await call(e, '/api/notifications', 'GET', a)).json(), { email: 'ana@example.com', digest: 'weekly', moderation: true, moderates: false });
+  assert.deepEqual(await (await call(e, '/api/notifications', 'GET', a)).json(), { email: 'ana@example.com', digest: 'weekly', moderation: true, moderates: false, devices: 0, push_key: null });
   const b = await join(e), photo = crypto.randomUUID(); await upload(e, b, photo);
   const admin = await adminCookie(e);
   const monday = new Date('2026-10-05T09:30:00Z'); // 10:30 in the Canaries
@@ -551,6 +553,64 @@ test('email notifications: moderation queue for admins, digests for members, onc
   assert.equal((await (await call(e, '/api/notifications', 'GET', a)).json()).digest, 'off');
   assert.equal((await call(e, '/api/unsubscribe', 'POST', '', { token: 'nope' })).status, 400);
 
-  assert.deepEqual(await (await call(e, '/api/admin/notifications', 'GET', admin)).json(), { email: 'admin@example.com', digest: 'weekly', moderation: true, moderates: true });
+  assert.deepEqual(await (await call(e, '/api/admin/notifications', 'GET', admin)).json(), { email: 'admin@example.com', digest: 'weekly', moderation: true, moderates: true, devices: 0, push_key: null });
   assert.equal((await (await call(e, '/api/admin/notifications', 'POST', admin, { moderation: false })).json()).moderation, false);
+});
+
+async function hmacBytes(key, data) {
+  const k = await crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return new Uint8Array(await crypto.subtle.sign('HMAC', k, data));
+}
+async function decryptPush(body, uaKeys, uaPublic, auth) {
+  const bytes = new Uint8Array(body), salt = bytes.slice(0, 16), idlen = bytes[20], asPublic = bytes.slice(21, 21 + idlen), cipher = bytes.slice(21 + idlen);
+  assert.equal(new DataView(bytes.buffer).getUint32(16), 4096);
+  const asKey = await crypto.subtle.importKey('raw', asPublic, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+  const shared = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: asKey }, uaKeys.privateKey, 256));
+  const t = new TextEncoder();
+  const ikm = await hmacBytes(await hmacBytes(auth, shared), Buffer.concat([t.encode('WebPush: info\0'), uaPublic, asPublic, Buffer.from([1])]));
+  const prk = await hmacBytes(salt, ikm);
+  const cek = (await hmacBytes(prk, Buffer.concat([t.encode('Content-Encoding: aes128gcm\0'), Buffer.from([1])]))).slice(0, 16);
+  const nonce = (await hmacBytes(prk, Buffer.concat([t.encode('Content-Encoding: nonce\0'), Buffer.from([1])]))).slice(0, 12);
+  const key = await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, ['decrypt']);
+  const plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce }, key, cipher));
+  assert.equal(plain.at(-1), 2);
+  return JSON.parse(new TextDecoder().decode(plain.slice(0, -1)));
+}
+
+test('web push: devices subscribe, receive encrypted VAPID-signed notices and expired ones are dropped', async () => {
+  const e = env();
+  const vapid = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  e.VAPID_PUBLIC_KEY = b64url(await crypto.subtle.exportKey('raw', vapid.publicKey));
+  e.VAPID_PRIVATE_KEY = (await crypto.subtle.exportKey('jwk', vapid.privateKey)).d;
+  const a = await join(e);
+  assert.equal((await (await call(e, '/api/notifications', 'GET', a)).json()).push_key, e.VAPID_PUBLIC_KEY);
+  const uaKeys = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const uaPublic = new Uint8Array(await crypto.subtle.exportKey('raw', uaKeys.publicKey)), auth = crypto.getRandomValues(new Uint8Array(16));
+  const keys = { p256dh: b64url(uaPublic), auth: b64url(auth) };
+  assert.equal((await call(e, '/api/push', 'POST', a, { endpoint: 'https://attacker.example/push', keys })).status, 400);
+  assert.equal((await call(e, '/api/push', 'POST', a, { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { ...keys, auth: 'x' } })).status, 400);
+  assert.equal((await call(e, '/api/push', 'POST', a, { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys })).status, 200);
+  assert.equal((await (await call(e, '/api/notifications', 'GET', a)).json()).devices, 1);
+
+  // No email linked: the device alone makes this person reachable.
+  const b = await join(e), photo = crypto.randomUUID(); await upload(e, b, photo);
+  e.sqlite.prepare("UPDATE photos SET status='published',published_at=? WHERE id=?").run('2026-10-05T08:00:00.000Z', photo);
+  const requests = [], realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { requests.push({ url, init }); return new Response(null, { status: requests.length > 1 ? 410 : 201 }); };
+  try {
+    assert.deepEqual(await sendNotifications(e, new Date('2026-10-05T09:30:00Z')), { sent: 1 });
+    const [{ url, init }] = requests;
+    assert.equal(url, 'https://fcm.googleapis.com/fcm/send/abc');
+    assert.equal(init.headers['Content-Encoding'], 'aes128gcm');
+    const [, token, k] = /^vapid t=([^,]+), k=(.+)$/.exec(init.headers.Authorization);
+    assert.equal(k, e.VAPID_PUBLIC_KEY);
+    const verified = await jwtVerify(token, await importJWK(await crypto.subtle.exportKey('jwk', vapid.publicKey), 'ES256'));
+    assert.equal(verified.payload.aud, 'https://fcm.googleapis.com');
+    assert.deepEqual(await decryptPush(init.body, uaKeys, uaPublic, auth), { title: '1 foto nueva en PhoTown', body: 'PhoTown: 1', url: '/wall', tag: 'digest' });
+
+    // A service answering 410 has dropped the device; it is forgotten and the notice retried later.
+    e.sqlite.prepare('DELETE FROM notification_deliveries').run();
+    assert.deepEqual(await sendNotifications(e, new Date('2026-10-05T10:30:00Z')), { sent: 0, failed: 1 });
+    assert.equal(e.sqlite.prepare('SELECT COUNT(*) n FROM push_subscriptions').get().n, 0);
+  } finally { globalThis.fetch = realFetch; }
 });

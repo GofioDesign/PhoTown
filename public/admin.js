@@ -37,7 +37,7 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
   };
   const isSuperadmin = context.type === 'superadmin';
   const createGroup = isSuperadmin ? `<form id="create-group"><label for="group-name">Nombre del nuevo grupo</label><input id="group-name" maxlength="80" required><label for="group-admin-email">Correo OAuth del owner inicial</label><input id="group-admin-email" name="owner_email" type="email" maxlength="254" required value="${escape(session.email)}"><button class="primary" type="submit">Crear grupo</button></form>` : '';
-  shell(`<section class="gallery-shell"><a class="brand" href="/" data-route="/">PHOTOWN</a><h1>${isSuperadmin ? 'Administración global' : escape(context.label)}</h1><p>${escape(session.email)}</p>${contexts.length > 1 ? '<a class="button" href="/admin">Cambiar rol</a>' : ''}<button id="logout">Cerrar sesión de administración</button><details id="admin-notices"><summary>Avisos por correo</summary><section></section></details>${createGroup}<p id="admin-message" role="status"></p><div id="new-invitation"></div><div id="groups" class="group-grid"></div><section id="group-detail" aria-label="Contenido del grupo"></section></section>`);
+  shell(`<section class="gallery-shell"><a class="brand" href="/" data-route="/">PHOTOWN</a><h1>${isSuperadmin ? 'Administración global' : escape(context.label)}</h1><p>${escape(session.email)}</p>${contexts.length > 1 ? '<a class="button" href="/admin">Cambiar rol</a>' : ''}<button id="logout">Cerrar sesión de administración</button><details id="admin-notices"><summary>Avisos</summary><section></section></details>${createGroup}<p id="admin-message" role="status"></p><div id="new-invitation"></div><div id="groups" class="group-grid"></div><section id="group-detail" aria-label="Contenido del grupo"></section></section>`);
   const waiting = isSuperadmin ? document.createElement('section') : null;
   if (waiting) {
     waiting.innerHTML = '<button id="show-waitlist" aria-expanded="false" aria-controls="waitlist-admin">Lista de espera</button><div id="waitlist-admin" hidden><h2>Personas en lista de espera</h2><p>Solicitudes guardadas sin envío de correos ni acceso automático.</p><div class="waitlist-table"></div><button id="more-waitlist" hidden>Cargar más solicitudes</button><p role="status"></p></div>';
@@ -78,10 +78,11 @@ export async function renderAdmin({ root, api, shell, current, confirmDeletion }
   }
   const report = text => { if (current()) root.querySelector('#admin-message').textContent = text; };
   const notices = root.querySelector('#admin-notices');
+  const send = (path, method, data) => rawApi(path, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   notices.addEventListener('toggle', () => {
     if (notices.open && !notices.dataset.loaded) {
       notices.dataset.loaded = 'true';
-      noticePreferences(notices.querySelector('section'), { load: () => rawApi('/api/admin/notifications'), save: data => rawApi('/api/admin/notifications', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }), current });
+      noticePreferences(notices.querySelector('section'), { load: () => rawApi('/api/admin/notifications'), save: data => send('/api/admin/notifications', 'POST', data), subscribe: data => send('/api/admin/push', 'POST', data), unsubscribe: data => send('/api/admin/push', 'DELETE', data), current });
     }
   });
   const post = (path, data = {}) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });

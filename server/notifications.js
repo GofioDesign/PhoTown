@@ -2,11 +2,13 @@ import { HttpError } from './security.js';
 import { signToken, verifyToken } from './tokens.js';
 import { sendMail, mailReady, layout } from './mail.js';
 import { photoWeek } from './community.js';
+import { pushReady, sendPush } from './push.js';
 
-// Email notifications sent from the hourly cron: a digest of new photos for wall members
-// (daily or weekly, per USER) and a daily reminder of the moderation queue for a group's
-// owner, admins and moderators. Each message is recorded before sending, so overlapping
-// or retried runs never send twice; a failed send releases its record for the next hour.
+// Notifications sent from the hourly cron, by email and by Web Push to every device that
+// accepted them: a digest of new photos for wall members (daily or weekly, per USER) and a
+// daily reminder of the moderation queue for a group's owner, admins and moderators.
+// Each message is recorded before sending, so overlapping or retried runs never send
+// twice; a message no channel delivered releases its record for the next hour.
 const TIME_ZONE = 'Atlantic/Canary';
 const SEND_HOUR = 9;
 const MAX_PER_RUN = 20;
@@ -28,12 +30,13 @@ export function localClock(date) {
 }
 
 export async function readPreferences(db, userId) {
-  const [row, email, moderates] = await Promise.all([
+  const [row, email, moderates, devices] = await Promise.all([
     db.prepare('SELECT digest,moderation FROM notification_preferences WHERE user_id=?').bind(userId).first(),
     db.prepare(`SELECT ${userEmail} AS email FROM users u WHERE u.id=?`).bind(userId).first(),
-    db.prepare("SELECT 1 FROM group_memberships WHERE user_id=? AND state='active' AND role IN ('owner','admin','moderator') LIMIT 1").bind(userId).first()
+    db.prepare("SELECT 1 FROM group_memberships WHERE user_id=? AND state='active' AND role IN ('owner','admin','moderator') LIMIT 1").bind(userId).first(),
+    db.prepare('SELECT COUNT(*) AS n FROM push_subscriptions WHERE user_id=?').bind(userId).first()
   ]);
-  return { email: email?.email ?? null, digest: row?.digest ?? 'weekly', moderation: row ? Boolean(row.moderation) : true, moderates: Boolean(moderates) };
+  return { email: email?.email ?? null, digest: row?.digest ?? 'weekly', moderation: row ? Boolean(row.moderation) : true, moderates: Boolean(moderates), devices: devices?.n ?? 0 };
 }
 
 export async function savePreferences(db, userId, body) {
@@ -75,6 +78,7 @@ async function digestMessage(env, db, user, kind, since) {
   const links = await unsubscribeLinks(env, user.user_id, 'digest');
   const period = kind === 'daily' ? 'las últimas 24 horas' : 'la última semana';
   return {
+    push: { title: `${plural(total, 'foto nueva', 'fotos nuevas')} en PhoTown`, body: groups.map(group => `${group.name}: ${group.photos}`).join(' · '), url: '/wall', tag: 'digest' },
     subject: `PhoTown: ${plural(total, 'foto nueva', 'fotos nuevas')}`,
     headers: links.headers,
     ...layout({
@@ -95,6 +99,7 @@ async function moderationMessage(env, db, user) {
   if (!total) return null;
   const links = await unsubscribeLinks(env, user.user_id, 'moderation');
   return {
+    push: { title: `${plural(total, 'foto pendiente', 'fotos pendientes')} de revisar`, body: groups.map(group => `${group.name}: ${group.photos}`).join(' · '), url: '/admin', tag: 'moderation' },
     subject: `PhoTown: ${plural(total, 'foto pendiente', 'fotos pendientes')} de revisar`,
     headers: links.headers,
     ...layout({
@@ -108,32 +113,34 @@ async function moderationMessage(env, db, user) {
 }
 
 async function candidates(db, kind, period, since, limit) {
+  const reachable = '(EXISTS(SELECT 1 FROM identity_providers ip WHERE ip.user_id=u.id AND ip.email IS NOT NULL) OR EXISTS(SELECT 1 FROM push_subscriptions ps WHERE ps.user_id=u.id))';
   const pending = 'NOT EXISTS(SELECT 1 FROM notification_deliveries d WHERE d.user_id=u.id AND d.kind=? AND d.period=?)';
   if (kind === 'moderation') return (await db.prepare(`SELECT u.id AS user_id,${userEmail} AS email FROM users u
     LEFT JOIN notification_preferences np ON np.user_id=u.id
     WHERE u.status='active' AND COALESCE(np.moderation,1)=1 AND ${pending}
       AND EXISTS(SELECT 1 FROM group_memberships gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id AND gm.role IN ('owner','admin','moderator') AND gm.state='active' AND g.active=1
         AND EXISTS(SELECT 1 FROM photos p WHERE p.group_id=g.id AND p.status='pending'))
-      AND EXISTS(SELECT 1 FROM identity_providers ip WHERE ip.user_id=u.id AND ip.email IS NOT NULL)
+      AND ${reachable}
     LIMIT ?`).bind(kind, period, limit).all()).results;
   return (await db.prepare(`SELECT u.id AS user_id,${userEmail} AS email FROM users u
     LEFT JOIN notification_preferences np ON np.user_id=u.id
     WHERE u.status='active' AND COALESCE(np.digest,'weekly')=? AND ${pending}
       AND EXISTS(SELECT 1 FROM group_memberships gm JOIN groups g ON g.id=gm.group_id JOIN photos p ON p.group_id=g.id
         WHERE gm.user_id=u.id AND ${activeGroup} AND p.status='published' AND p.published_at>=? AND COALESCE(p.user_id,'')!=u.id)
-      AND EXISTS(SELECT 1 FROM identity_providers ip WHERE ip.user_id=u.id AND ip.email IS NOT NULL)
+      AND ${reachable}
     LIMIT ?`).bind(kind, kind, period, since, limit).all()).results;
 }
 
 export async function sendNotifications(env, date = new Date()) {
-  if (!env.DB || !(mailReady(env) || Array.isArray(env.MAIL_OUTBOX))) return { sent: 0 };
+  const mail = mailReady(env) || Array.isArray(env.MAIL_OUTBOX);
+  if (!env.DB || !(mail || pushReady(env))) return { sent: 0 };
   const db = env.DB.withSession('first-primary');
   const clock = localClock(date);
   await db.prepare('DELETE FROM notification_deliveries WHERE sent_at<?').bind(seconds(date) - KEEP_DELIVERIES_DAYS * 86400).run();
   if (clock.hour < SEND_HOUR) return { sent: 0 };
   const runs = [{ kind: 'moderation', period: clock.day }, { kind: 'daily', period: clock.day, since: new Date(date - 86400000).toISOString() }];
   if (clock.monday) runs.push({ kind: 'weekly', period: photoWeek(date), since: new Date(date - 7 * 86400000).toISOString() });
-  let sent = 0;
+  let sent = 0, failed = 0;
   for (const run of runs) {
     if (sent >= MAX_PER_RUN) break;
     for (const user of await candidates(db, run.kind, run.period, run.since, MAX_PER_RUN - sent)) {
@@ -141,15 +148,19 @@ export async function sendNotifications(env, date = new Date()) {
       if (!claimed.meta.changes) continue;
       const message = run.kind === 'moderation' ? await moderationMessage(env, db, user) : await digestMessage(env, db, user, run.kind, run.since);
       if (!message) continue;
-      let delivered = false;
-      try { delivered = await sendMail(env, { to: user.email, ...message }); }
-      catch (error) { console.error('Notification delivery failed', error); }
+      const { push, ...email } = message;
+      let delivered = (await sendPush(env, db, user.user_id, push)) > 0;
+      if (mail && user.email) {
+        try { delivered = (await sendMail(env, { to: user.email, ...email })) || delivered; }
+        catch (error) { console.error('Notification delivery failed', error); }
+      }
       if (!delivered) {
         await db.prepare('DELETE FROM notification_deliveries WHERE user_id=? AND kind=? AND period=?').bind(user.user_id, run.kind, run.period).run();
-        return { sent, failed: true };
+        failed++;
+        continue;
       }
       sent++;
     }
   }
-  return { sent };
+  return failed ? { sent, failed } : { sent };
 }

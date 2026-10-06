@@ -7,6 +7,7 @@ import { canonicalEmail } from './identity.js';
 import { linkedEmail, requestEmailLink, requestLogin, verifyEmail } from './email-login.js';
 import { acceptInvitation, listInvitations, previewInvitation, sendInvitations } from './invitations.js';
 import { readPreferences, savePreferences, unsubscribe } from './notifications.js';
+import { removeSubscription, saveSubscription } from './push.js';
 
 const json = (data, status = 200, headers = {}) => Response.json(data, { status, headers });
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -225,8 +226,12 @@ async function adminRoutes(request, env, db, url) {
     return json({ deleted: true });
   }
   if (url.pathname === '/api/admin/notifications') {
-    if (request.method === 'GET') return json(await readPreferences(db, admin.user_id));
+    if (request.method === 'GET') return json({ ...await readPreferences(db, admin.user_id), push_key: env.VAPID_PUBLIC_KEY || null });
     if (request.method === 'POST') return json(await savePreferences(db, admin.user_id, await bodyJSON(request, 1024)));
+  }
+  if (url.pathname === '/api/admin/push') {
+    if (request.method === 'POST') return json(await saveSubscription(db, admin.user_id, await bodyJSON(request, 2048)));
+    if (request.method === 'DELETE') return json(await removeSubscription(db, admin.user_id, await bodyJSON(request, 2048)));
   }
   if (url.pathname === '/api/admin/logout' && request.method === 'POST') return json({ ok: true }, 200, { 'Set-Cookie': cookieHeader(request, 'photown_admin', '', 0) });
   if (url.pathname === '/api/admin/groups') {
@@ -504,8 +509,13 @@ export async function communityRoute(request, env) {
     if (!member) throw new HttpError(403, 'Primero necesitas una invitación para ese grupo.');
     return json({ group: member }, 200, { 'Set-Cookie': cookieHeader(request, 'photown_group', await signToken(env, { publisher: user.publisher_id, group: member.id }, 'participant', 43200), 43200) });
   }
+  if (path === '/api/push' && ['POST','DELETE'].includes(request.method)) {
+    await rate(env.UPLOAD_LIMITER, user.publisher_id);
+    const body = await bodyJSON(request, 2048);
+    return json(request.method === 'POST' ? await saveSubscription(db, user.user_id, body) : await removeSubscription(db, user.user_id, body));
+  }
   if (path === '/api/notifications') {
-    if (request.method === 'GET') return json(await readPreferences(db, user.user_id));
+    if (request.method === 'GET') return json({ ...await readPreferences(db, user.user_id), push_key: env.VAPID_PUBLIC_KEY || null });
     if (request.method === 'POST') {
       await rate(env.UPLOAD_LIMITER, user.publisher_id);
       return json(await savePreferences(db, user.user_id, await bodyJSON(request, 1024)));
