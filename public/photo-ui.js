@@ -1,3 +1,4 @@
+import { noticePreferences } from './notices.js';
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels = { uploading: 'Envío incompleto', pending: 'Pendiente de revisión', published: 'En el muro', hidden: 'Fuera del muro', deleting: 'Borrado pendiente' };
 
@@ -51,7 +52,7 @@ export function photoUI({ root, api, shell, navigate, state, current, confirmDel
     };
   }
   async function settings(version) {
-    shell(`<section class="settings-shell">${header()}<h1>Personalización</h1><a class="button" href="/enter" data-route="/enter">Añadir otro grupo</a><a class="button" href="/admin">Administración</a><form id="alias-form"><label for="my-alias">Mi alias (opcional)</label><input id="my-alias" maxlength="40" autocomplete="nickname"><p class="note">Firma de tus fotos en ${escape(state().name)}. Déjalo vacío para retirar la atribución.</p><button disabled>Guardar alias</button><p role="status"></p></form><fieldset class="handedness"><legend>Mano preferida</legend><label><input type="radio" name="hand" value="right">Diestro</label><label><input type="radio" name="hand" value="left">Zurdo</label></fieldset><p id="preference-message" role="status"></p><section id="account-email" aria-labelledby="account-email-title"><h2 id="account-email-title" tabindex="-1">Correo de acceso</h2><div class="account-email-body"><p>Cargando…</p></div></section><button id="select-photos">Seleccionar varias fotos</button><button data-install>Instalar app</button><details><summary>Recuperar mi acceso</summary><p class="note">Guarda tu identidad. Si pierdes las cookies, el administrador puede ayudarte a recuperar tus fotos.</p><label for="identity">Mi identidad</label><input id="identity" readonly><button id="copy-identity">Copiar mi identidad</button><p id="identity-message" role="status"></p></details><button id="participant-logout">Salir de la sesión de usuario</button><p class="note">Podrás volver a entrar con una invitación sin perder la relación con tus fotografías en este dispositivo.</p><a class="button" href="/wall" data-route="/wall">Volver al muro</a><p id="message" role="alert"></p></section>`);
+    shell(`<section class="settings-shell">${header()}<h1>Personalización</h1><a class="button" href="/enter" data-route="/enter">Añadir otro grupo</a><a class="button" href="/admin">Administración</a><form id="alias-form"><label for="my-alias">Mi alias (opcional)</label><input id="my-alias" maxlength="40" autocomplete="nickname"><p class="note">Firma de tus fotos en ${escape(state().name)}. Déjalo vacío para retirar la atribución.</p><button disabled>Guardar alias</button><p role="status"></p></form><fieldset class="handedness"><legend>Mano preferida</legend><label><input type="radio" name="hand" value="right">Diestro</label><label><input type="radio" name="hand" value="left">Zurdo</label></fieldset><p id="preference-message" role="status"></p><section id="account-email" aria-labelledby="account-email-title"><h2 id="account-email-title" tabindex="-1">Correo de acceso</h2><div class="account-email-body"><p>Cargando…</p></div></section><section id="email-notices" aria-label="Avisos por correo"></section><button id="select-photos">Seleccionar varias fotos</button><button data-install>Instalar app</button><details><summary>Recuperar mi acceso</summary><p class="note">Guarda tu identidad. Si pierdes las cookies, el administrador puede ayudarte a recuperar tus fotos.</p><label for="identity">Mi identidad</label><input id="identity" readonly><button id="copy-identity">Copiar mi identidad</button><p id="identity-message" role="status"></p></details><button id="participant-logout">Salir de la sesión de usuario</button><p class="note">Podrás volver a entrar con una invitación sin perder la relación con tus fotografías en este dispositivo.</p><a class="button" href="/wall" data-route="/wall">Volver al muro</a><p id="message" role="alert"></p></section>`);
     root.querySelector(`[name=hand][value=${handedness()}]`).checked = true;
     root.querySelectorAll('[name=hand]').forEach(input => input.onchange = () => {
       try { localStorage.setItem('photown-handedness', input.value); root.querySelector('#preference-message').textContent = 'Preferencia guardada en este dispositivo.'; }
@@ -66,7 +67,8 @@ export function photoUI({ root, api, shell, navigate, state, current, confirmDel
     try {
       const session = await api('/api/session'); if (!current(version)) return;
       root.querySelector('#identity').value = session.identity || '';
-      accountEmail(session);
+      accountEmail(session, version);
+      notices(version);
       const form = root.querySelector('#alias-form'); form.querySelector('input').value = session.alias || ''; form.querySelector('button').disabled = false;
       form.onsubmit = async event => {
         event.preventDefault(); const button = form.querySelector('button'); button.disabled = true;
@@ -80,7 +82,10 @@ export function photoUI({ root, api, shell, navigate, state, current, confirmDel
       };
     } catch (error) { if (current(version)) root.querySelector('#message').textContent = error.message; }
   }
-  function accountEmail(session) {
+  function notices(version) {
+    return noticePreferences(root.querySelector('#email-notices'), { load: () => api('/api/notifications'), save: data => post('/api/notifications', data), current: () => current(version) });
+  }
+  function accountEmail(session, version) {
     const target = root.querySelector('#account-email .account-email-body');
     if (session.email) {
       target.innerHTML = '<p></p><p class="note">Para entrar en otro dispositivo, elige «Entrar con mi correo» en la pantalla de entrada.</p>';
@@ -99,7 +104,8 @@ export function photoUI({ root, api, shell, navigate, state, current, confirmDel
       event.preventDefault(); const button = codeForm.querySelector('button'); button.disabled = true;
       try {
         const result = await post('/api/login/verify', { purpose: 'link', email: emailForm.elements.email.value, code: codeForm.elements.code.value });
-        accountEmail({ email: result.email });
+        accountEmail({ email: result.email }, version);
+        notices(version);
         root.querySelector('#account-email h2').focus();
       } catch (error) { status.textContent = error.message; button.disabled = false; }
     };

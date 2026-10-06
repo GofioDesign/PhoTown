@@ -6,6 +6,7 @@ import { addPhotoToCurrentWall, assignGroupRole, createInitialWall, ensureAdminP
 import { canonicalEmail } from './identity.js';
 import { linkedEmail, requestEmailLink, requestLogin, verifyEmail } from './email-login.js';
 import { acceptInvitation, listInvitations, previewInvitation, sendInvitations } from './invitations.js';
+import { readPreferences, savePreferences, unsubscribe } from './notifications.js';
 
 const json = (data, status = 200, headers = {}) => Response.json(data, { status, headers });
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -223,6 +224,10 @@ async function adminRoutes(request, env, db, url) {
     await db.prepare('DELETE FROM waitlist WHERE id=?').bind(waitlistItem[1]).run();
     return json({ deleted: true });
   }
+  if (url.pathname === '/api/admin/notifications') {
+    if (request.method === 'GET') return json(await readPreferences(db, admin.user_id));
+    if (request.method === 'POST') return json(await savePreferences(db, admin.user_id, await bodyJSON(request, 1024)));
+  }
   if (url.pathname === '/api/admin/logout' && request.method === 'POST') return json({ ok: true }, 200, { 'Set-Cookie': cookieHeader(request, 'photown_admin', '', 0) });
   if (url.pathname === '/api/admin/groups') {
     if (request.method === 'GET') {
@@ -394,6 +399,13 @@ async function adminRoutes(request, env, db, url) {
 export async function communityRoute(request, env) {
   const url = new URL(request.url), path = url.pathname;
   const db = env.DB.withSession('first-primary');
+  // One-click unsubscribe comes from mail providers without an Origin; the signed token is the authority.
+  if (path === '/api/unsubscribe' && request.method === 'POST') {
+    await rate(env.ENTRY_LIMITER, 'unsubscribe:' + await digest(request.headers.get('CF-Connecting-IP') || 'local'));
+    let token = url.searchParams.get('token');
+    if (!token && request.headers.get('Content-Type')?.split(';')[0] === 'application/json') token = (await bodyJSON(request, 2048))?.token;
+    return json(await unsubscribe(env, db, token));
+  }
   if (!['GET', 'HEAD'].includes(request.method)) requireSameOrigin(request);
   if (path === '/api/admin/google/start' && request.method === 'GET') {
     await rate(env.ENTRY_LIMITER, await digest(request.headers.get('CF-Connecting-IP') || 'local'));
@@ -491,6 +503,13 @@ export async function communityRoute(request, env) {
     const member = await db.prepare("SELECT g.id,g.name FROM group_memberships gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=? AND gm.state NOT IN ('blocked','left') AND g.id=? AND g.active=1").bind(user.user_id, typeof group === 'string' ? group : '').first();
     if (!member) throw new HttpError(403, 'Primero necesitas una invitación para ese grupo.');
     return json({ group: member }, 200, { 'Set-Cookie': cookieHeader(request, 'photown_group', await signToken(env, { publisher: user.publisher_id, group: member.id }, 'participant', 43200), 43200) });
+  }
+  if (path === '/api/notifications') {
+    if (request.method === 'GET') return json(await readPreferences(db, user.user_id));
+    if (request.method === 'POST') {
+      await rate(env.UPLOAD_LIMITER, user.publisher_id);
+      return json(await savePreferences(db, user.user_id, await bodyJSON(request, 1024)));
+    }
   }
   if (path === '/api/account/email' && request.method === 'POST') {
     await rate(env.UPLOAD_LIMITER, user.publisher_id);

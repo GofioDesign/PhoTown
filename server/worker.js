@@ -1,6 +1,7 @@
 import { HttpError, requireConfiguration, issueSession, readSession, sameSecret, requireSameOrigin, boundedBody, digest } from './security.js';
 import { sanitizeWebP } from './webp.js';
 import { communityRoute, cleanupDeleted } from './community.js';
+import { sendNotifications } from './notifications.js';
 
 const json = (data, status = 200, headers = {}) => Response.json(data, { status, headers });
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -66,15 +67,18 @@ async function route(request, env) {
     requireConfiguration(env);
     if (!(await readSession(env, request))) return new Response(null, { status: 302, headers: { Location: '/enter' } });
   }
-  if (['/', '/enter', '/login', '/invite', '/camera', '/preview'].includes(url.pathname)) {
+  if (['/', '/enter', '/login', '/invite', '/unsubscribe', '/camera', '/preview'].includes(url.pathname)) {
     return env.ASSETS.fetch(new Request(new URL('/index.html', url), request));
   }
   // Public app assets only; photographs are authorized by communityRoute.
-  if (['/app.js', '/photo-ui.js', '/zip.js', '/grids.js', '/clipping.js', '/exposure.js', '/admin.js', '/processing.js', '/install.js', '/styles.css', '/robots.txt', '/sw.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'].includes(url.pathname)) return env.ASSETS.fetch(request);
+  if (['/app.js', '/photo-ui.js', '/zip.js', '/grids.js', '/clipping.js', '/exposure.js', '/notices.js', '/admin.js', '/processing.js', '/install.js', '/styles.css', '/robots.txt', '/sw.js', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'].includes(url.pathname)) return env.ASSETS.fetch(request);
   return new Response('Página no encontrada', { status: 404 });
 }
 export default {
-  async scheduled(event, env, context) { context.waitUntil(cleanupDeleted(env)); },
+  async scheduled(event, env, context) {
+    context.waitUntil(cleanupDeleted(env));
+    context.waitUntil(sendNotifications(env, new Date(event.scheduledTime)).catch(error => console.error('Notifications failed', error)));
+  },
   async fetch(request, env) {
     let response;
     try { response = await route(request, env); }

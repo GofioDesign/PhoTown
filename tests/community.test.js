@@ -8,6 +8,7 @@ import { authorizeGoogleClaims } from '../server/google-auth.js';
 import { cleanupDeleted, photoWeek, erasePhoto } from '../server/community.js';
 import { sanitizeWebP } from '../server/webp.js';
 import { ensureAdminPrincipal } from '../server/core-v6.js';
+import { sendNotifications } from '../server/notifications.js';
 
 function env() {
   const sqlite = new DatabaseSync(':memory:'); sqlite.exec(readFileSync(new URL('../db/migrations/0001_groups.sql', import.meta.url), 'utf8'));
@@ -19,6 +20,7 @@ function env() {
   sqlite.exec(readFileSync(new URL('../db/migrations/0007_email_login.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../db/migrations/0008_rotation_challenges.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../db/migrations/0009_email_invitations.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../db/migrations/0010_email_notifications.sql', import.meta.url), 'utf8'));
   const db = { withSession() { return this; }, prepare(sql) {
     let args = [];
     return { bind(...values) { args = values.map(value => Array.isArray(value) ? new Uint8Array(value) : value); return this; },
@@ -504,4 +506,51 @@ test('admins invite by email; the link joins the group once and links the addres
   const groups = (await (await call(e, '/api/groups', 'GET', other)).json()).groups.map(g => g.name).sort();
   assert.deepEqual(groups, ['Clase', 'PhoTown']);
   assert.equal((await call(e, '/api/invitation', 'POST', '', { token: 'f'.repeat(64) })).status, 410);
+});
+
+test('email notifications: moderation queue for admins, digests for members, once per period, with unsubscribe', async () => {
+  const e = env(); e.MAIL_OUTBOX = []; e.APP_ORIGIN = origin;
+  const a = await join(e);
+  await call(e, '/api/account/email', 'POST', a, { email: 'ana@example.com' });
+  await call(e, '/api/login/verify', 'POST', a, { purpose: 'link', email: 'ana@example.com', code: lastCode(e) });
+  assert.deepEqual(await (await call(e, '/api/notifications', 'GET', a)).json(), { email: 'ana@example.com', digest: 'weekly', moderation: true, moderates: false });
+  const b = await join(e), photo = crypto.randomUUID(); await upload(e, b, photo);
+  const admin = await adminCookie(e);
+  const monday = new Date('2026-10-05T09:30:00Z'); // 10:30 in the Canaries
+  e.MAIL_OUTBOX = [];
+
+  assert.deepEqual(await sendNotifications(e, new Date('2026-10-05T06:30:00Z')), { sent: 0 });
+  assert.deepEqual(await sendNotifications(e, monday), { sent: 1 });
+  assert.equal(e.MAIL_OUTBOX[0].to, 'admin@example.com');
+  assert.match(e.MAIL_OUTBOX[0].subject, /1 foto pendiente/);
+  assert.match(e.MAIL_OUTBOX[0].text, /«PhoTown»: 1 foto pendiente/);
+  assert.match(e.MAIL_OUTBOX[0].headers['List-Unsubscribe'], /^<https:\/\/photown\.test\/api\/unsubscribe\?token=/);
+  assert.deepEqual(await sendNotifications(e, monday), { sent: 0 });
+
+  e.sqlite.prepare("UPDATE photos SET status='published',published_at=? WHERE id=?").run('2026-10-05T08:00:00.000Z', photo);
+  e.MAIL_OUTBOX = [];
+  assert.deepEqual(await sendNotifications(e, monday), { sent: 2 });
+  assert.deepEqual(e.MAIL_OUTBOX.map(mail => mail.to).sort(), ['admin@example.com', 'ana@example.com']);
+  assert.match(e.MAIL_OUTBOX[0].text, /1 foto nueva en tus muros/);
+  assert.match(e.MAIL_OUTBOX[0].text, /resumen semanal/);
+  assert.deepEqual(await sendNotifications(e, monday), { sent: 0 });
+
+  // Daily on a Tuesday counts only the last 24 hours.
+  assert.equal((await call(e, '/api/notifications', 'POST', a, { digest: 'daily' })).status, 200);
+  assert.equal((await call(e, '/api/notifications', 'POST', a, { digest: 'hourly' })).status, 400);
+  e.MAIL_OUTBOX = [];
+  assert.deepEqual(await sendNotifications(e, new Date('2026-10-06T09:30:00Z')), { sent: 0 });
+  e.sqlite.prepare('UPDATE photos SET published_at=? WHERE id=?').run('2026-10-06T07:00:00.000Z', photo);
+  assert.deepEqual(await sendNotifications(e, new Date('2026-10-06T09:30:00Z')), { sent: 1 });
+  assert.equal(e.MAIL_OUTBOX[0].to, 'ana@example.com');
+  assert.match(e.MAIL_OUTBOX[0].text, /resumen diario/);
+
+  const token = /token=([^>]+)>/.exec(e.MAIL_OUTBOX[0].headers['List-Unsubscribe'])[1];
+  const oneClick = await worker.fetch(new Request(`${origin}/api/unsubscribe?token=${token}`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'List-Unsubscribe=One-Click' }), e);
+  assert.equal(oneClick.status, 200);
+  assert.equal((await (await call(e, '/api/notifications', 'GET', a)).json()).digest, 'off');
+  assert.equal((await call(e, '/api/unsubscribe', 'POST', '', { token: 'nope' })).status, 400);
+
+  assert.deepEqual(await (await call(e, '/api/admin/notifications', 'GET', admin)).json(), { email: 'admin@example.com', digest: 'weekly', moderation: true, moderates: true });
+  assert.equal((await (await call(e, '/api/admin/notifications', 'POST', admin, { moderation: false })).json()).moderation, false);
 });
