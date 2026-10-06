@@ -37,7 +37,8 @@ export function exposurePanel(track, panel, say) {
     ${support.time ? `<label>Velocidad <output data-out="time"></output><input type="range" data-input="time" min="0" max="${speeds.length - 1}" step="1"></label>` : ''}
     ${support.iso ? `<label>ISO <output data-out="iso"></output><input type="range" data-input="iso" min="0" max="${isos.length - 1}" step="1"></label>` : ''}
     ${support.compensation ? `<label>Compensación <output data-out="comp"></output><input type="range" data-input="comp" min="${comp.min}" max="${comp.max}" step="${comp.step || .1}"></label>` : ''}
-    <p class="note">La apertura (F) es fija en los móviles.</p>`;
+    <p class="note">La apertura (F) es fija en los móviles.</p>
+    ${support.time && support.iso ? '' : `<p class="note">Esta cámara no deja elegir ${support.time ? 'el ISO' : support.iso ? 'la velocidad' : 'velocidad ni ISO'} desde una web. La cámara informa: ${exposureReport(track).replace(/[&<>]/g, '')}</p>`}`;
   const input = name => panel.querySelector(`[data-input=${name}]`), output = name => panel.querySelector(`[data-out=${name}]`);
   let mode = 'auto';
   if (input('time')) input('time').value = nearest(speeds, settings.exposureTime ?? speeds[Math.floor(speeds.length / 2)]);
@@ -66,4 +67,17 @@ export function exposurePanel(track, panel, say) {
   panel.querySelectorAll('input').forEach(element => element.oninput = () => { show(); apply(); });
   show();
   return { support };
+}
+
+// One line describing what the camera reported, shown when manual exposure is not offered.
+export function exposureReport(track) {
+  const capabilities = track.getCapabilities?.();
+  if (!capabilities) return 'el navegador no da información de la cámara.';
+  const range = value => value && Number.isFinite(value.min) ? `${value.min}–${value.max}` : 'no';
+  return [
+    `modos ${Array.isArray(capabilities.exposureMode) && capabilities.exposureMode.length ? capabilities.exposureMode.join('/') : 'no'}`,
+    `tiempo ${range(capabilities.exposureTime)}`,
+    `ISO ${range(capabilities.iso)}`,
+    `compensación ${range(capabilities.exposureCompensation)}`
+  ].join(', ') + '.';
 }

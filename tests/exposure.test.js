@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { exposureSupport, speedSteps, isoSteps, speedLabel } from '../public/exposure.js';
+import { exposureSupport, speedSteps, isoSteps, speedLabel, exposureReport } from '../public/exposure.js';
 import { markClipping } from '../public/clipping.js';
 
 test('manual exposure is offered only when the camera exposes it', () => {
@@ -22,4 +22,10 @@ test('clipping marks only pure white red and pure black blue', () => {
   assert.deepEqual([...target.slice(0, 4)], [255, 32, 32, 255]);
   assert.deepEqual([...target.slice(4, 8)], [40, 110, 255, 255]);
   assert.equal(target[11], 0); assert.equal(target[15], 0);
+});
+
+test('exposureReport summarises what the camera reported', () => {
+  assert.equal(exposureReport({ getCapabilities: () => ({}) }), 'modos no, tiempo no, ISO no, compensación no.');
+  assert.equal(exposureReport({ getCapabilities: () => ({ exposureMode: ['continuous'], exposureCompensation: { min: -2, max: 2 } }) }), 'modos continuous, tiempo no, ISO no, compensación -2–2.');
+  assert.equal(exposureReport({}), 'el navegador no da información de la cámara.');
 });
