@@ -7,12 +7,13 @@ import { pushReady, sendPush } from './push.js';
 // Notifications sent from the cron (every 10 minutes), by email and by Web Push to every
 // device that accepted them: a digest of new photos for wall members (daily or weekly, per
 // USER) and, for a group's owner, admins and moderators, a notice as soon as a new photo
-// waits for review (daytime only). Each message is recorded before sending, so overlapping
+// waits for review (08:00–21:00 only). Each message is recorded before sending, so overlapping
 // or retried runs never send twice; a message no channel delivered releases its record
 // for the next run.
 const TIME_ZONE = 'Atlantic/Canary';
-const SEND_HOUR = 9;
-const QUIET_HOUR = 23; // no moderation notices from 23:00 until SEND_HOUR
+// Nothing is sent outside 08:00–21:00 Canary time; what waits overnight goes out at 08:00.
+const SEND_HOUR = 8;
+const QUIET_HOUR = 21;
 const MAX_PER_RUN = 20;
 const KEEP_DELIVERIES_DAYS = 60;
 const UNSUBSCRIBE_SECONDS = 365 * 24 * 60 * 60;
@@ -108,7 +109,7 @@ async function moderationMessage(env, db, user) {
       title: `${plural(total, 'foto espera', 'fotos esperan')} tu revisión`,
       paragraphs: groups.map(group => `«${group.name}»: ${plural(group.photos, 'foto pendiente', 'fotos pendientes')}.`),
       action: 'Revisar en Administración', link: `${origin(env)}/admin`,
-      footer: 'Recibes este aviso porque moderas estos grupos. Llega cuando hay fotos nuevas por revisar, entre las 9:00 y las 23:00.',
+      footer: 'Recibes este aviso porque moderas estos grupos. Llega cuando hay fotos nuevas por revisar, entre las 8:00 y las 21:00.',
       unsubscribe: links.page
     })
   };
@@ -141,9 +142,8 @@ export async function sendNotifications(env, date = new Date()) {
   const db = env.DB.withSession('first-primary');
   const clock = localClock(date);
   await db.prepare('DELETE FROM notification_deliveries WHERE sent_at<?').bind(seconds(date) - KEEP_DELIVERIES_DAYS * 86400).run();
-  if (clock.hour < SEND_HOUR) return { sent: 0 };
-  const runs = [{ kind: 'daily', period: clock.day, since: new Date(date - 86400000).toISOString() }];
-  if (clock.hour < QUIET_HOUR) runs.unshift({ kind: 'moderation', period: date.toISOString().slice(0, 16) });
+  if (clock.hour < SEND_HOUR || clock.hour >= QUIET_HOUR) return { sent: 0 };
+  const runs = [{ kind: 'moderation', period: date.toISOString().slice(0, 16) }, { kind: 'daily', period: clock.day, since: new Date(date - 86400000).toISOString() }];
   if (clock.monday) runs.push({ kind: 'weekly', period: photoWeek(date), since: new Date(date - 7 * 86400000).toISOString() });
   let sent = 0, failed = 0;
   for (const run of runs) {
