@@ -24,18 +24,21 @@ export async function sendMail(env, { to, subject, text, html, headers }) {
 }
 
 // One restrained layout for every message: black and white, a single action.
-export function layout({ title, paragraphs, action, link, footer, unsubscribe }) {
+export function layout({ title, paragraphs, photos = [], action, link, footer, unsubscribe }) {
   const html = `<!doctype html><html lang="es"><body style="margin:0;background:#111;color:#eee;font-family:Arial,Helvetica,sans-serif">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:40px 20px">
 <table role="presentation" width="100%" style="max-width:520px"><tr><td>
 <p style="letter-spacing:.2em;font-size:13px;color:#aaa;margin:0 0 32px">PHOTOWN</p>
 <h1 style="font-weight:400;font-size:24px;line-height:1.3;margin:0 0 20px">${escape(title)}</h1>
 ${paragraphs.map(p => `<p style="font-size:16px;line-height:1.6;color:#ccc;margin:0 0 16px">${escape(p)}</p>`).join('')}
+${photos.map(photo => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px"><tr><td>
+<a href="${escape(link || '')}"><img src="${escape(photo.src)}" width="520" alt="${escape(photo.alt || 'Fotografía')}" style="display:block;width:100%;max-width:520px;height:auto;border:0;background:#000"></a>
+<p style="font-size:13px;color:#aaa;line-height:1.5;margin:8px 0 0">${escape(photo.caption)}</p></td></tr></table>`).join('')}
 ${link ? `<p style="margin:32px 0"><a href="${escape(link)}" style="display:inline-block;background:#eee;color:#111;text-decoration:none;padding:14px 28px;font-size:16px">${escape(action)}</a></p>
 <p style="font-size:13px;color:#999;line-height:1.5;word-break:break-all">Si el botón no funciona, copia esta dirección en el navegador:<br>${escape(link)}</p>` : ''}
 ${footer ? `<p style="font-size:13px;color:#888;line-height:1.5;margin-top:32px">${escape(footer)}</p>` : ''}
 ${unsubscribe ? `<p style="font-size:13px;color:#888;line-height:1.5;margin-top:16px"><a href="${escape(unsubscribe)}" style="color:#aaa">Dejar de recibir estos avisos</a></p>` : ''}
 </td></tr></table></td></tr></table></body></html>`;
-  const plain = [title, '', ...paragraphs, ...(link ? ['', `${action}: ${link}`] : []), ...(footer ? ['', footer] : []), ...(unsubscribe ? ['', `Dejar de recibir estos avisos: ${unsubscribe}`] : [])].join('\n');
+  const plain = [title, '', ...paragraphs, ...photos.map(photo => `- ${photo.caption}`), ...(link ? ['', `${action}: ${link}`] : []), ...(footer ? ['', footer] : []), ...(unsubscribe ? ['', `Dejar de recibir estos avisos: ${unsubscribe}`] : [])].join('\n');
   return { html, text: plain };
 }
