@@ -539,11 +539,18 @@ test('email notifications: moderation queue for admins, digests for members, onc
   e.sqlite.prepare("UPDATE photos SET status='hidden' WHERE id=?").run(second);
 
   e.sqlite.prepare("UPDATE photos SET status='published',published_at=? WHERE id=?").run('2026-10-05T08:00:00.000Z', photo);
+  assert.equal((await call(e, '/api/profile', 'POST', b, { alias: 'Berta' })).status, 200);
   e.MAIL_OUTBOX = [];
   assert.deepEqual(await sendNotifications(e, monday), { sent: 2 });
   assert.deepEqual(e.MAIL_OUTBOX.map(mail => mail.to).sort(), ['admin@example.com', 'ana@example.com']);
   assert.match(e.MAIL_OUTBOX[0].text, /1 foto nueva en tus muros/);
   assert.match(e.MAIL_OUTBOX[0].text, /resumen semanal/);
+  // The preview shows the author's alias and a signed image link that works without a session.
+  assert.match(e.MAIL_OUTBOX[0].text, /- Berta · «PhoTown»/);
+  const preview = /src="https:\/\/photown\.test(\/api\/mail-image\/[^"]+)"/.exec(e.MAIL_OUTBOX[0].html)[1].replace(/&amp;/g, '&');
+  assert.equal((await call(e, preview, 'GET', '')).status, 200);
+  assert.equal((await call(e, preview.replace(/t=.*/, 't=forged'), 'GET', '')).status, 404);
+  assert.equal((await call(e, preview.replace(photo, crypto.randomUUID()), 'GET', '')).status, 404);
   assert.deepEqual(await sendNotifications(e, monday), { sent: 0 });
 
   // Daily on a Tuesday counts only the last 24 hours.

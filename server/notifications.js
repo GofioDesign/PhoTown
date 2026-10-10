@@ -18,6 +18,8 @@ const MAX_PER_RUN = 20;
 const KEEP_DELIVERIES_DAYS = 60;
 const UNSUBSCRIBE_SECONDS = 365 * 24 * 60 * 60;
 const DEFAULT_ORIGIN = 'https://photown.gofiodesign.eu';
+const PREVIEW_PHOTOS = 6;
+export const MAIL_IMAGE_SECONDS = 30 * 24 * 60 * 60;
 export const DIGESTS = ['off', 'daily', 'weekly'];
 
 const seconds = date => Math.floor(date.getTime() / 1000);
@@ -80,13 +82,27 @@ async function digestMessage(env, db, user, kind, since) {
   if (!total) return null;
   const links = await unsubscribeLinks(env, user.user_id, 'digest');
   const period = kind === 'daily' ? 'las últimas 24 horas' : 'la última semana';
+  // The newest photos, with their author's alias when they chose one. Images load from a
+  // signed link because the mail client has no PhoTown session.
+  const latest = (await db.prepare(`SELECT p.id,p.description,g.name AS group_name,NULLIF(trim(m.alias),'') AS alias
+    FROM group_memberships gm JOIN groups g ON g.id=gm.group_id
+    JOIN photos p ON p.group_id=g.id AND p.status='published' AND p.published_at>=? AND COALESCE(p.user_id,'')!=gm.user_id
+    LEFT JOIN memberships m ON m.publisher_id=p.publisher_id AND m.group_id=p.group_id
+    WHERE gm.user_id=? AND ${activeGroup} ORDER BY p.published_at DESC,p.id DESC LIMIT ${PREVIEW_PHOTOS}`).bind(since, user.user_id).all()).results;
+  const photos = await Promise.all(latest.map(async photo => ({
+    src: `${origin(env)}/api/mail-image/${photo.id}?t=${await signToken(env, { photo: photo.id }, 'mail-image', MAIL_IMAGE_SECONDS)}`,
+    alt: photo.description || 'Fotografía sin descripción',
+    caption: `${photo.alias ? `${photo.alias} · ` : ''}«${photo.group_name}»${photo.description ? ` · ${photo.description}` : ''}`
+  })));
+  const authors = [...new Set(latest.map(photo => photo.alias).filter(Boolean))];
   return {
-    push: { title: `${plural(total, 'foto nueva', 'fotos nuevas')} en PhoTown`, body: groups.map(group => `${group.name}: ${group.photos}`).join(' · '), url: '/wall', tag: 'digest' },
+    push: { title: `${plural(total, 'foto nueva', 'fotos nuevas')} en PhoTown`, body: [groups.map(group => `${group.name}: ${group.photos}`).join(' · '), authors.length ? `De ${authors.join(', ')}` : ''].filter(Boolean).join('. '), url: '/wall', tag: 'digest' },
     subject: `PhoTown: ${plural(total, 'foto nueva', 'fotos nuevas')}`,
     headers: links.headers,
     ...layout({
       title: `${plural(total, 'foto nueva', 'fotos nuevas')} en tus muros`,
-      paragraphs: [`Esto es lo que se ha publicado en ${period}:`, ...groups.map(group => `«${group.name}»: ${plural(group.photos, 'foto nueva', 'fotos nuevas')}.`)],
+      paragraphs: [`Esto es lo que se ha publicado en ${period}:`, ...groups.map(group => `«${group.name}»: ${plural(group.photos, 'foto nueva', 'fotos nuevas')}.`), ...(total > photos.length ? [`Aquí van las ${photos.length} más recientes; el resto, en el muro.`] : [])],
+      photos,
       action: 'Ver el muro', link: `${origin(env)}/wall`,
       footer: `Recibes este resumen ${kind === 'daily' ? 'diario' : 'semanal'} porque participas en estos grupos. Puedes cambiar la frecuencia en Personalización.`,
       unsubscribe: links.page

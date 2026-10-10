@@ -443,6 +443,15 @@ export async function communityRoute(request, env) {
     if (path === '/api/invitation') return json(await previewInvitation(db, body));
     return acceptInvitation(request, env, db, body, await identity(request, env, db));
   }
+  // Digest previews: the mail client has no session, so a signed link opens one published photo.
+  const mailImage = /^\/api\/mail-image\/([a-f0-9-]+)$/.exec(path);
+  if (mailImage && request.method === 'GET') {
+    const claims = await verifyToken(env, url.searchParams.get('t') || '', 'mail-image');
+    const photo = claims?.photo === mailImage[1] && await db.prepare("SELECT image_key FROM photos WHERE id=? AND status='published'").bind(mailImage[1]).first();
+    const object = photo && await env.PHOTOS.get(photo.image_key);
+    if (!object) throw new HttpError(404, 'No se encuentra la fotografía.');
+    return new Response(object.body, { headers: { 'Content-Type': 'image/webp' } });
+  }
   const user = await participant(request, env, db);
   if (path === '/api/session' && request.method === 'GET') return json({ authenticated: Boolean(user), group: user ? { id: user.group_id, name: user.name } : null, status: user?.status, identity: user?.publisher_id, alias: user?.alias, email: user ? await linkedEmail(db, user.user_id) : null, has_avatar: user ? Boolean(await db.prepare('SELECT 1 FROM profile_avatars WHERE publisher_id=? AND group_id=?').bind(user.publisher_id, user.group_id).first()) : false });
   const avatarMatch = /^\/api\/photo-avatar\/([a-f0-9-]+)$/.exec(path);
